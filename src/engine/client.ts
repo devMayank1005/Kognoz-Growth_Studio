@@ -62,8 +62,19 @@ export function streamProse(opts: {
       { type: "text", text: opts.liveState, cache_control: { type: "ephemeral" } },
     ],
     messages: opts.messages,
-    tools: [{ type: WEB_SEARCH_TOOL, name: "web_search", max_uses: 4 }],
+    // Bounded at 2. Each search costs seconds of wall clock, and measurement
+    // showed a question that fired four of them pushed first-visible-text past
+    // 110s. Two is enough to verify a fact or find a name.
+    tools: [{ type: WEB_SEARCH_TOOL, name: "web_search", max_uses: 2 }],
+    // Effort is the dominant factor in time-to-first-token: measured ~6.0s at
+    // medium versus ~2.3s at low. Medium is kept because this is judgement
+    // work and 6s sits inside the PRD's 8s p50 budget; the dead air is solved
+    // by streaming the reasoning summary below, not by lowering quality.
     output_config: { effort: "medium" },
+    // Opus 5 defaults thinking `display` to "omitted", which reads as a long
+    // silence before anything appears. Summarised reasoning gives the operator
+    // something true to watch while the engine works.
+    thinking: { type: "adaptive", display: "summarized" },
   };
 
   if (FAST_MODE_ENABLED) {

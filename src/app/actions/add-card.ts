@@ -1,0 +1,192 @@
+"use server";
+
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
+
+import { db, withOrg } from "@/db/client";
+import { accounts, activities, dnc, opportunities, people } from "@/db/schema";
+import { loadPartnerUserIds, loadPartnersByTower } from "@/db/queries";
+import { isDoNotContact } from "@/domain/dnc";
+import { industryOf } from "@/domain/industry";
+import { practiceByName } from "@/domain/practices";
+import { makeCard, type EngineRow } from "@/domain/routing";
+import { requireSession } from "@/lib/session";
+
+/**
+ * Direct add (PRD §5) — the single path by which anything enters the pipeline.
+ *
+ * The chat action table, the quick-add box, and the `add {company}` intent all
+ * come through here, so routing, valuation, DNC, and dedupe have exactly one
+ * implementation and cannot drift apart.
+ */
+
+const rowSchema = z.object({
+  company: z.string().min(1),
+  solution: z.string().optional(),
+  contact_name: z.string().optional(),
+  contact_title: z.string().optional(),
+  country: z.string().optional(),
+  industry: z.string().optional(),
+  trigger: z.string().optional(),
+  signal: z.string().optional(),
+  value: z.number().int().positive().optional(),
+  url: z.string().optional(),
+});
+
+export type AddCardResult =
+  | { ok: true; id: string; account: string; practice: string; tower: string; partner: string; value: number; tier: string; stage: string }
+  | { ok: false; reason: "dnc" | "duplicate" | "invalid"; message: string };
+
+const LIVE_STAGES = ["Prospect", "Plan reach-out", "Reached out", "In conversation", "Meeting set", "Proposal"] as const;
+
+export async function addCard(
+  input: unknown,
+  options?: { stage?: "Prospect" | "Plan reach-out" },
+): Promise<AddCardResult> {
+  const session = await requireSession();
+
+  const parsed = rowSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, reason: "invalid", message: "That row is missing a company name." };
+  }
+  const row = parsed.data as EngineRow;
+  const companyName = row.company.replace(/^NEW:\s*/, "").trim();
+
+  // ------------------------------------------------------------------ DNC
+  // §8: the do-not-contact list blocks add, draft, and packet. Checked before
+  // anything is written. The comparison rule lives in domain/dnc.ts so the
+  // same tested logic serves all three call sites.
+  const dncList = await db
+    .select({ name: dnc.name })
+    .from(dnc)
+    .where(eq(dnc.orgId, session.orgId));
+
+  if (isDoNotContact(companyName, dncList.map((d) => d.name))) {
+    return {
+      ok: false,
+      reason: "dnc",
+      message: `${companyName} is on the do-not-contact list. It cannot be added, drafted to, or packeted.`,
+    };
+  }
+
+  // -------------------------------------------------------------- account
+  const [account] = await db
+    .insert(accounts)
+    .values({
+      orgId: session.orgId,
+      name: companyName,
+      country: row.country || null,
+      industry: row.industry || industryOf(row.industry),
+      status: "discovered",
+      firstSeen: new Date().toISOString().slice(0, 10),
+    })
+    .onConflictDoUpdate({
+      target: [accounts.orgId, accounts.name],
+      // Do not clobber a curated account's status or segment on re-add.
+      set: { country: sql`coalesce(${accounts.country}, excluded.country)` },
+    })
+    .returning({ id: accounts.id });
+
+  // ------------------------------------------------------------- dedupe
+  // One live card per account (§5). A Won/Lost card does not block a new one.
+  const existing = await db
+    .select({ id: opportunities.id })
+    .from(opportunities)
+    .where(
+      and(
+        eq(opportunities.orgId, session.orgId),
+        eq(opportunities.accountId, account.id),
+        inArray(opportunities.stage, [...LIVE_STAGES]),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    return {
+      ok: false,
+      reason: "duplicate",
+      message: `${companyName} is already live in the pipeline.`,
+    };
+  }
+
+  // ---------------------------------------------------------------- route
+  const [partnerNames, partnerIds] = await Promise.all([
+    loadPartnersByTower(session.orgId),
+    loadPartnerUserIds(session.orgId),
+  ]);
+
+  const card = makeCard(row, {
+    partnerOf: (tower) => partnerNames[tower],
+    stage: options?.stage ?? "Prospect",
+  });
+
+  // A named contact is only linked when we actually hold that person as a
+  // verified record. Otherwise the target ROLE is stored — never a free-text
+  // name pretending to be verified (§9.5).
+  let contactPersonId: string | null = null;
+  if (row.contact_name) {
+    const [match] = await db
+      .select({ id: people.id })
+      .from(people)
+      .where(and(eq(people.accountId, account.id), eq(people.name, row.contact_name)))
+      .limit(1);
+    contactPersonId = match?.id ?? null;
+  }
+
+  const practiceId = practiceByName(card.practice)?.id ?? "org";
+
+  const inserted = await withOrg(session.orgId, async (tx) => {
+    const [opp] = await tx
+      .insert(opportunities)
+      .values({
+        orgId: session.orgId,
+        accountId: account.id,
+        practiceId,
+        tower: card.tower,
+        partnerUserId: partnerIds[card.tower],
+        stage: card.stage,
+        tier: card.tier,
+        value: card.value,
+        whale: card.whale,
+        contactPersonId,
+        contactRole: contactPersonId ? null : card.contact || row.contact_title || null,
+        signalCode: card.signal || null,
+        evidence: card.evidence || null,
+        url: card.url || null,
+        nextStep: card.next,
+        dueOn: card.due || null,
+        createdBy: session.userId,
+      })
+      .returning({ id: opportunities.id });
+
+    // §5 — every add is on the activity timeline, with actor and time.
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      opportunityId: opp.id,
+      accountId: account.id,
+      type: "added",
+      payloadJson: {
+        practice: card.practice,
+        tower: card.tower,
+        value: card.value,
+        tier: card.tier,
+        signal: card.signal,
+      },
+      actorId: session.userId,
+    });
+
+    return opp;
+  });
+
+  return {
+    ok: true,
+    id: inserted.id,
+    account: card.account,
+    practice: card.practice,
+    tower: card.tower,
+    partner: card.partner,
+    value: card.value,
+    tier: card.tier,
+    stage: card.stage,
+  };
+}

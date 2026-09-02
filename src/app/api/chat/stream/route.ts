@@ -136,6 +136,15 @@ export async function POST(request: Request) {
               prose += event.delta.text;
               send("delta", { text: event.delta.text });
             }
+            // Reasoning summary — shown as progress, never as the answer.
+            if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
+              send("thinking", { text: event.delta.thinking });
+            }
+            // Web search is the slowest thing the engine does; say so rather
+            // than leaving the panel blank for tens of seconds.
+            if (event.type === "content_block_start" && event.content_block.type === "server_tool_use") {
+              send("searching", { query: (event.content_block.input as { query?: string })?.query ?? "" });
+            }
             // Web search failures come back as HTTP 200 with an error object
             // inside the result block — they never throw.
             if (event.type === "content_block_start") {

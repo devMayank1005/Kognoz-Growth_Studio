@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "motion/react";
+import { Toaster } from "sonner";
 import { useState } from "react";
 
 /**
@@ -35,6 +36,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}>
         {children}
+        {/* §9.6 — toasts are confirmations, never questions. */}
+        <Toaster position="bottom-right" toastOptions={{ duration: 6000 }} />
       </MotionConfig>
     </QueryClientProvider>
   );
