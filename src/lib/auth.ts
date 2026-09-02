@@ -4,6 +4,7 @@ import { organization } from "better-auth/plugins";
 
 import { db } from "@/db/client";
 import * as schema from "@/db/schema";
+import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
 
 /**
  * Better Auth owns identity and membership: users, sessions, organizations and
@@ -16,7 +17,21 @@ import * as schema from "@/db/schema";
  *
  * Redirect URI to register in the Entra app:
  *   {BETTER_AUTH_URL}/api/auth/callback/microsoft
+ *
+ * ACCESS is two independent layers:
+ *   1. MICROSOFT_TENANT_ID pins sign-in to the Kognoz Entra directory.
+ *   2. ALLOWED_EMAIL_DOMAINS additionally excludes tenant GUESTS, who keep
+ *      their own address and would otherwise see the whole pipeline.
+ * Membership itself is granted just-in-time in src/lib/session.ts.
  */
+const allowedDomains = parseAllowedDomains(process.env.ALLOWED_EMAIL_DOMAINS);
+
+if (allowedDomains.length === 0) {
+  throw new Error(
+    "ALLOWED_EMAIL_DOMAINS is not set. Refusing to start with an empty allowlist — " +
+      "set it to e.g. kognozconsulting.com.",
+  );
+}
 const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
 
 if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) {
@@ -36,6 +51,21 @@ export const auth = betterAuth({
       // "common" accepts any Entra tenant. Set MICROSOFT_TENANT_ID to the
       // Kognoz tenant to lock sign-in to the organisation.
       tenantId,
+    },
+  },
+
+  user: {
+    /**
+     * Refuse a disallowed address at the auth layer, before any row is
+     * written. Bouncing later would leave orphaned user records behind for
+     * every guest who ever tried.
+     */
+    validateUserInfo: ({ user }) => {
+      if (isAllowedEmailDomain(user.email, allowedDomains)) return;
+      return {
+        error: "domain_not_allowed",
+        errorDescription: `Growth Studio is limited to ${allowedDomains.join(", ")} accounts.`,
+      };
     },
   },
 

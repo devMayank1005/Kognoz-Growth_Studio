@@ -196,6 +196,9 @@ export const opportunities = pgTable(
 export const activityTypes = [
   "added", "draft", "sent", "packet", "replied", "meeting",
   "proposal", "park", "won", "lost", "note", "zoho_push",
+  // Access granted by domain allowlist — PRD §8 requires an audit entry on
+  // every write, and granting a workspace is a write.
+  "member_added",
 ] as const;
 
 export const activities = pgTable(
