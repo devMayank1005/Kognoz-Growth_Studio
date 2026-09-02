@@ -30,6 +30,15 @@ TanStack Query + Table · Zustand · Zod · Vitest · Playwright
   `<head>` that runs before React hydrates — not from an effect.
 - Port 3000 is usually taken by the separate Kognoz Social Studio app on this
   machine, so `pnpm dev` typically lands on 3001. Check the startup log.
+
+## Database
+
+The Neon project is **claimable and EXPIRES 2026-09-05 11:30 UTC** unless claimed. Runbook:
+`docs/CLAIM-NEON.md`. Take a verified backup first with `pnpm db:backup --verify` — dumps land in
+`backups/` and are gitignored because they contain real email addresses (§8).
+
+Migrations and `pg_dump` use `DATABASE_URL_UNPOOLED` (the direct endpoint). The app uses the pooled
+`DATABASE_URL`. Neon's pooler does not carry the session state either of those needs.
 - Full breaking-change list: `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`.
 
 ## Anthropic API rules (do not regress these)

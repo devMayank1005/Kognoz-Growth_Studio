@@ -51,3 +51,8 @@ drizzle/meta/_journal.json.bak
 /blob-report/
 /playwright/.cache/
 .neon
+
+# Database dumps — contain real user email addresses (PRD §8).
+# The README in this directory IS tracked; the dumps are not.
+backups/*.dump
+backups/*.sql

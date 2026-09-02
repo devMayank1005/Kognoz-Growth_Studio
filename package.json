@@ -16,7 +16,8 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed.ts",
     "db:check-compliance": "node scripts/check-compliance.mjs",
-    "db:check-auth": "node scripts/check-auth-schema.mjs"
+    "db:check-auth": "node scripts/check-auth-schema.mjs",
+    "db:backup": "node scripts/backup.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
