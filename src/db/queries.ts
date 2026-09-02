@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { accounts, member, opportunities, people, signals, user } from "@/db/schema";
+import { accounts, member, opportunities, people, signals, sweepRuns, user } from "@/db/schema";
 import type { SweepItem, UniverseAccount } from "@/domain/scoring";
 import type { TowerKey } from "@/domain/revenue";
 import { TOWER_KEYS } from "@/domain/practices";
@@ -205,3 +205,37 @@ export async function loadDnc(orgId: string): Promise<string[]> {
 }
 
 export { inArray };
+
+export interface SweepStatus {
+  /** Sweeps finished today and how many were planned, for the i/n bar. */
+  doneToday: number;
+  /** Live signals dated today. */
+  triggersToday: number;
+  lastSweepAt: string | null;
+  lastError: string | null;
+}
+
+/** Feeds the status line (PRD §2): what the machine is doing, always visible. */
+export async function loadSweepStatus(orgId: string): Promise<SweepStatus> {
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+
+  const runs = await db
+    .select({ startedAt: sweepRuns.startedAt, errors: sweepRuns.errors, itemsFound: sweepRuns.itemsFound })
+    .from(sweepRuns)
+    .where(and(eq(sweepRuns.orgId, orgId), gte(sweepRuns.startedAt, since)))
+    .orderBy(desc(sweepRuns.startedAt));
+
+  const [trig] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(signals)
+    .where(and(eq(signals.orgId, orgId), eq(signals.date, new Date().toISOString().slice(0, 10))));
+
+  const failed = runs.find((r) => r.errors);
+  return {
+    doneToday: runs.length,
+    triggersToday: trig?.n ?? 0,
+    lastSweepAt: runs[0]?.startedAt ? runs[0].startedAt.toISOString() : null,
+    lastError: failed?.errors ?? null,
+  };
+}

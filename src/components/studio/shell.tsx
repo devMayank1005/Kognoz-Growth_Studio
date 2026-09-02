@@ -164,11 +164,13 @@ function Stat({
 export function StatusLine({
   sweep,
   triggersToday = 0,
+  lastSweepAt,
   lastZohoSync,
   error,
 }: {
   sweep?: { done: number; total: number };
   triggersToday?: number;
+  lastSweepAt?: string | null;
   lastZohoSync?: string;
   error?: string;
 }) {
@@ -184,7 +186,11 @@ export function StatusLine({
         />
       )}
       <span>
-        {sweeping ? `Sweeping ${sweep.done}/${sweep.total}` : "Sweeps idle"}
+        {sweeping
+          ? `Sweeping ${sweep.done}/${sweep.total}`
+          : lastSweepAt
+            ? `Last sweep ${new Date(lastSweepAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+            : "No sweep yet today"}
       </span>
       <span className="num">{triggersToday} triggers today</span>
       <span>Zoho {lastZohoSync ? `synced ${lastZohoSync}` : "not connected"}</span>

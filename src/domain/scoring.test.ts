@@ -216,3 +216,41 @@ describe("rankTargets — radar finds", () => {
     expect(out[0].signal).toBe("H1");
   });
 });
+
+describe("rankTargets — an aged L6 is an AMS play even when it arrives as a live signal", () => {
+  const universe = [{ name: "Tenaga Nasional", country: "Malaysia", segment: "energy", status: "prospect" as const }];
+
+  // Regression: the Today page passes the same signal list as both `items` and
+  // `history`, because both come from one query. The AMS pass skipped any
+  // account already seen in `items`, so an aged L6 was filed as a stale tier-1
+  // signal and the AMS window never opened. PRD §4.2 is explicit: L6 "does not
+  // decay for T2 — resurfaces at 180-540 days as an AMS play".
+  it("flags an L6 inside the window that came through items", () => {
+    const out = rankTargets({
+      items: [{ account: "Tenaga Nasional", signal: "L6", date: daysAgo(300) }],
+      universe,
+      now: NOW,
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].ams).toBe(true);
+    expect(out[0].tower).toBe("T2");
+    expect(out[0].score).toBe(AMS_SCORE);
+  });
+
+  it("still flags it when the same list is passed as items and history", () => {
+    const items = [{ account: "Tenaga Nasional", signal: "L6", date: daysAgo(300) }];
+    const out = rankTargets({ items, universe, history: items, now: NOW });
+    expect(out).toHaveLength(1);
+    expect(out[0].ams).toBe(true);
+  });
+
+  it("leaves a FRESH L6 alone — it is a go-live lead, not an AMS play yet", () => {
+    const out = rankTargets({
+      items: [{ account: "Tenaga Nasional", signal: "L6", date: daysAgo(10) }],
+      universe,
+      now: NOW,
+    });
+    expect(out[0].ams).toBe(false);
+    expect(out[0].score).toBeGreaterThan(AMS_SCORE);
+  });
+});

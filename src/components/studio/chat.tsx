@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
@@ -12,6 +12,8 @@ import { EngineChartBlock } from "./engine-chart";
 
 interface Turn {
   role: "user" | "engine";
+  /** "brief" gets the §9.9 headline treatment; everything else is an answer. */
+  kind?: "brief" | "answer";
   text: string;
   chart?: EngineChart | null;
   rows?: EngineRow[];
@@ -34,7 +36,27 @@ export function Chat() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+
+  // Load persisted history on mount. This is how the morning brief — written
+  // overnight by the scheduled sweep — is waiting when the operator opens the
+  // app, with no model call.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/thread")
+      .then((r) => (r.ok ? r.json() : { turns: [] }))
+      .then((d) => {
+        if (cancelled) return;
+        setTurns(d.turns ?? []);
+        setLoaded(true);
+        requestAnimationFrame(() => endRef.current?.scrollIntoView());
+      })
+      .catch(() => setLoaded(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const scrollToEnd = () => requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
 
@@ -152,7 +174,7 @@ export function Chat() {
     <div className="flex h-full flex-col">
       <div className="flex-1 overflow-y-auto px-6 py-8">
         <div className="mx-auto max-w-3xl">
-          {turns.length === 0 && <EmptyState onPick={send} />}
+          {loaded && turns.length === 0 && <EmptyState onPick={send} />}
 
           <AnimatePresence initial={false}>
             {turns.map((turn, i) =>
@@ -164,6 +186,11 @@ export function Chat() {
                 <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8">
                   {/* §9.5 — the cyan hairline marks this block as engine-authored. */}
                   <div className="engine-mark">
+                    {turn.kind === "brief" && (
+                      <p className="mb-1 font-display text-[13px] tracking-tight text-body">
+                        Morning brief
+                      </p>
+                    )}
                     {/* Progress is the engine working, not its answer. It is
                         replaced the moment real text arrives. */}
                     {!turn.text && turn.progress && (

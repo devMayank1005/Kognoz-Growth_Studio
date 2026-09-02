@@ -12,7 +12,7 @@
 import { industryOf, type Industry } from "./industry";
 import { practicesForSignal, towerOfPractice } from "./practices";
 import type { TowerKey } from "./revenue";
-import { AMS_WINDOW_END_DAYS, AMS_WINDOW_START_DAYS, freshness, signalByCode, tierWeight, type Engine, type Tier } from "./signals";
+import { AMS_WINDOW_END_DAYS, AMS_WINDOW_START_DAYS, freshness, isAmsWindow, signalByCode, tierWeight, type Engine, type Tier } from "./signals";
 
 export const FRESHNESS_WEIGHT = 35;
 export const AMS_SCORE = 30;
@@ -143,7 +143,14 @@ export function rankTargets(input: RankInput): Target[] {
 
     const ageDays = ageInDays(item.date, now);
     const tier = signalByCode(item.signal)?.tier ?? 3;
-    const score = flags.ams ? AMS_SCORE : scoreTarget({ signalCode: item.signal, ageDays, relationship });
+
+    // PRD §4.2: L6 "does not decay for T2 — resurfaces at 180-540 days as an
+    // AMS play". An aged go-live is therefore an AMS opportunity wherever it
+    // arrives from, not a stale tier-1 signal. Detecting it here rather than
+    // only in the history pass means a caller that supplies one signal list
+    // for both arguments still gets the right answer.
+    const isAms = flags.ams || isAmsWindow(item.signal, ageDays);
+    const score = isAms ? AMS_SCORE : scoreTarget({ signalCode: item.signal, ageDays, relationship });
 
     const target: Target = {
       name,
@@ -151,14 +158,14 @@ export function rankTargets(input: RankInput): Target[] {
       industry: industryOf(item.segment || account?.segment),
       // The AMS motion is a T2 play regardless of which practice nominally
       // owns L6 — the Darwinbox tower runs it.
-      tower: flags.ams ? AMS_TOWER : towerOfSignal(item.signal, item.engine || account?.engine),
+      tower: isAms ? AMS_TOWER : towerOfSignal(item.signal, item.engine || account?.engine),
       signal: item.signal,
       tier,
       ageDays,
       score,
       relationship,
       inPipeline: liveCardByAccount.has(name),
-      ams: flags.ams ?? false,
+      ams: isAms,
       radarOnly: flags.radarOnly ?? false,
       evidence: item.evidence || item.headline || "",
       url: item.url ?? "",
