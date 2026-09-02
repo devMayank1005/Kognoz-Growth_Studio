@@ -8,6 +8,13 @@
       "when": 1788348744956,
       "tag": "0000_mean_sleepwalker",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788352965603,
+      "tag": "0001_red_blob",
+      "breakpoints": true
     }
   ]
 }
