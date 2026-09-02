@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Reference material, not our source. docs/konverz-sales-copilot.jsx is
+    // the prototype we port behaviour from — it is read, never built.
+    "docs/**",
+    ".vercel/**",
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 
