@@ -15,6 +15,13 @@
       "when": 1788352965603,
       "tag": "0001_red_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788370102238,
+      "tag": "0002_abandoned_purifiers",
+      "breakpoints": true
     }
   ]
 }

@@ -266,6 +266,26 @@ export const dnc = pgTable(
   (t) => [uniqueIndex("dnc_org_name_idx").on(t.orgId, t.name)],
 );
 
+/**
+ * Which tower a partner owns (PRD §1, §5).
+ *
+ * A separate table rather than a column on Better Auth's `member`: that table
+ * is generated from their runtime, and adding to it invites a regenerate to
+ * clobber it. This also replaces the seeder's original trick of matching the
+ * tower key inside the partner's NAME, which broke the moment a placeholder
+ * was renamed to a real person.
+ */
+export const partnerTowers = pgTable(
+  "partner_towers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: text("org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    tower: text("tower", { enum: ["T1", "T2", "T3", "T4"] }).notNull(),
+  },
+  (t) => [uniqueIndex("partner_towers_org_tower_idx").on(t.orgId, t.tower)],
+);
+
 /** Model-call ledger backing the per-org daily budget guard (PRD §4.1). */
 export const modelCalls = pgTable(
   "model_calls",

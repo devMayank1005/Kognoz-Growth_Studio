@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { accounts, member, opportunities, people, signals, sweepRuns, user } from "@/db/schema";
+import { accounts, activities, opportunities, partnerTowers, people, signals, sweepRuns, user } from "@/db/schema";
 import type { SweepItem, UniverseAccount } from "@/domain/scoring";
 import type { TowerKey } from "@/domain/revenue";
 import { TOWER_KEYS } from "@/domain/practices";
@@ -166,33 +166,26 @@ export async function loadPipeline(orgId: string): Promise<PipelineCardRow[]> {
 /** Tower → partner name, for routing and for the live-state block. */
 export async function loadPartnersByTower(orgId: string): Promise<Record<TowerKey, string>> {
   const rows = await db
-    .select({ id: user.id, name: user.name })
-    .from(member)
-    .innerJoin(user, eq(member.userId, user.id))
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "partner")));
+    .select({ tower: partnerTowers.tower, name: user.name })
+    .from(partnerTowers)
+    .innerJoin(user, eq(partnerTowers.userId, user.id))
+    .where(eq(partnerTowers.orgId, orgId));
 
   const out = {} as Record<TowerKey, string>;
   for (const tower of TOWER_KEYS) {
-    // Placeholder partners are seeded as "Partner — T3 Hire", so the tower key
-    // in the name is what maps them. Renaming in Settings will set an explicit
-    // tower column; until then this is the link.
-    const match = rows.find((r) => r.name.includes(tower));
-    out[tower] = match?.name ?? "—";
+    out[tower] = rows.find((r) => r.tower === tower)?.name ?? "—";
   }
   return out;
 }
 
 export async function loadPartnerUserIds(orgId: string): Promise<Record<TowerKey, string | null>> {
   const rows = await db
-    .select({ id: user.id, name: user.name })
-    .from(member)
-    .innerJoin(user, eq(member.userId, user.id))
-    .where(and(eq(member.organizationId, orgId), eq(member.role, "partner")));
+    .select({ tower: partnerTowers.tower, id: partnerTowers.userId })
+    .from(partnerTowers)
+    .where(eq(partnerTowers.orgId, orgId));
 
   const out = {} as Record<TowerKey, string | null>;
-  for (const tower of TOWER_KEYS) {
-    out[tower] = rows.find((r) => r.name.includes(tower))?.id ?? null;
-  }
+  for (const tower of TOWER_KEYS) out[tower] = rows.find((r) => r.tower === tower)?.id ?? null;
   return out;
 }
 
@@ -238,4 +231,93 @@ export async function loadSweepStatus(orgId: string): Promise<SweepStatus> {
     lastSweepAt: runs[0]?.startedAt ? runs[0].startedAt.toISOString() : null,
     lastError: failed?.errors ?? null,
   };
+}
+
+
+/* ------------------------------------------------------------- accounts */
+
+export interface AccountListRow {
+  id: string;
+  name: string;
+  country: string;
+  industry: string;
+  status: "client" | "prospect" | "discovered";
+  signalCount: number;
+  firstSeen: string | null;
+  inPipeline: boolean;
+}
+
+/** The account universe (§9.9), with live signal counts. */
+export async function loadAccountList(orgId: string): Promise<AccountListRow[]> {
+  const rows = await db
+    .select({
+      id: accounts.id,
+      name: accounts.name,
+      country: accounts.country,
+      industry: accounts.industry,
+      status: accounts.status,
+      firstSeen: accounts.firstSeen,
+      signalCount: sql<number>`count(distinct ${signals.id})::int`,
+      cardCount: sql<number>`count(distinct ${opportunities.id})::int`,
+    })
+    .from(accounts)
+    .leftJoin(signals, and(eq(signals.accountId, accounts.id), isNull(signals.dismissedAt)))
+    .leftJoin(opportunities, eq(opportunities.accountId, accounts.id))
+    .where(eq(accounts.orgId, orgId))
+    .groupBy(accounts.id)
+    .orderBy(desc(sql`count(distinct ${signals.id})`), accounts.name);
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    country: r.country ?? "—",
+    industry: r.industry ?? "—",
+    status: r.status,
+    signalCount: r.signalCount,
+    firstSeen: r.firstSeen,
+    inPipeline: r.cardCount > 0,
+  }));
+}
+
+/** Everything the account dossier needs (§9.9). One round of queries. */
+export async function loadAccountDossier(orgId: string, accountId: string) {
+  const [account] = await db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.orgId, orgId), eq(accounts.id, accountId)))
+    .limit(1);
+  if (!account) return null;
+
+  const [accountSignals, accountPeople, cards, timeline] = await Promise.all([
+    db
+      .select({
+        code: signals.code, tier: signals.tier, headline: signals.headline,
+        evidence: signals.evidence, url: signals.url, date: signals.date,
+        confidence: signals.confidence,
+      })
+      .from(signals)
+      .where(and(eq(signals.accountId, accountId), isNull(signals.dismissedAt)))
+      .orderBy(desc(signals.date)),
+    db
+      .select({ name: people.name, role: people.role, source: people.source, verifiedAt: people.verifiedAt })
+      .from(people)
+      .where(eq(people.accountId, accountId)),
+    db
+      .select({
+        id: opportunities.id, practiceId: opportunities.practiceId, tower: opportunities.tower,
+        stage: opportunities.stage, value: opportunities.value, partner: user.name,
+      })
+      .from(opportunities)
+      .leftJoin(user, eq(opportunities.partnerUserId, user.id))
+      .where(eq(opportunities.accountId, accountId)),
+    db
+      .select({ type: activities.type, at: activities.at, actor: user.name })
+      .from(activities)
+      .leftJoin(user, eq(activities.actorId, user.id))
+      .where(eq(activities.accountId, accountId))
+      .orderBy(desc(activities.at))
+      .limit(25),
+  ]);
+
+  return { account, signals: accountSignals, people: accountPeople, cards, timeline };
 }

@@ -103,6 +103,16 @@ async function main() {
         createdAt: new Date(),
       });
     }
+
+    // Explicit tower ownership, so renaming a partner in Settings cannot break
+    // routing the way matching on the name would.
+    await db
+      .insert(schema.partnerTowers)
+      .values({ orgId: org.id, userId: u.id, tower })
+      .onConflictDoUpdate({
+        target: [schema.partnerTowers.orgId, schema.partnerTowers.tower],
+        set: { userId: u.id },
+      });
   }
   console.log(`  partners    ${TOWER_KEYS.length} placeholders, one per tower`);
 
