@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { PipelineCardRow } from "@/db/queries";
 import { practiceById } from "@/domain/practices";
+import { useSelection } from "@/store/selection";
 import { cn } from "@/lib/cn";
 
 /**
@@ -39,6 +40,13 @@ export function PipelineTable({
 }) {
   const [active, setActive] = useState(0);
   const bodyRef = useRef<HTMLTableSectionElement>(null);
+  const select = useSelection((s) => s.select);
+  const selectedId = useSelection((s) => s.card?.id);
+
+  const choose = (card: PipelineCardRow) => {
+    select(card);
+    onSelect?.(card);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -50,12 +58,13 @@ export function PipelineTable({
         e.preventDefault();
         setActive((i) => Math.max(i - 1, 0));
       } else if (e.key === "Enter") {
-        onSelect?.(cards[active]);
+        choose(cards[active]);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cards, active, onSelect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, active]);
 
   if (cards.length === 0) {
     return (
@@ -86,12 +95,12 @@ export function PipelineTable({
               key={c.id}
               onClick={() => {
                 setActive(i);
-                onSelect?.(c);
+                choose(c);
               }}
               aria-selected={i === active}
               className={cn(
                 "cursor-pointer border-b border-line last:border-0",
-                i === active && "bg-panel",
+                (i === active || c.id === selectedId) && "bg-panel",
                 c.id === highlightId && "row-added",
               )}
             >

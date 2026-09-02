@@ -1,3 +1,4 @@
+import { InspectorPanel } from "@/components/studio/inspector-panel";
 import { StatusLine, StudioShell, TopBar } from "@/components/studio/shell";
 import { curveTarget, monthOf } from "@/domain/revenue";
 import { db } from "@/db/client";
@@ -36,6 +37,7 @@ export default async function StudioLayout({ children }: LayoutProps<"/">) {
           pendingZoho={pendingZoho}
         />
       }
+      inspector={<InspectorPanel />}
       statusLine={
         <StatusLine
           triggersToday={sweep.triggersToday}
