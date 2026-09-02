@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 
 import { config } from "dotenv";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
