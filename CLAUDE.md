@@ -38,8 +38,11 @@ TanStack Query + Table · Zustand · Zod · Vitest · Playwright
   the prototype. Extraction runs on `claude-haiku-4-5`.
 - Web search tool is **`web_search_20260209`**, not the prototype's `web_search_20250305`.
 - **Never** send `budget_tokens` or `temperature` — both return 400 on Opus 5.
-- Fast Mode needs all three together: `client.beta.messages.stream(...)`,
-  `betas: ["fast-mode-2026-02-01"]`, and top-level `speed: "fast"`. On 429, drop `speed` and retry.
+- **Fast Mode is NOT enabled on this org** (verified 2026-09-02: "rate limit of 0 fast mode input
+  tokens per minute"). The engine runs standard Opus 5. The capability stays behind
+  `ENABLE_FAST_MODE=1`, off by default — do not make it the default path, it will always 429.
+  If it is ever granted, it needs all three together: `client.beta.messages.stream(...)`,
+  `betas: ["fast-mode-2026-02-01"]`, and top-level `speed: "fast"`.
 - Web search errors return **HTTP 200** with an error object inside `web_search_tool_result` —
   they do not throw. Success `content` is an array; error `content` is an object. Branch on it.
 - Build the cached live-state block against a **5-minute rounded timestamp**, never `Date.now()`,
