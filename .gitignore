@@ -30,8 +30,6 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
 
 # vercel
 .vercel
@@ -40,10 +38,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# env
-.env
-.env.local
-.env*.local
+# env — real secrets ignored, the template is tracked
+.env*
+!.env.example
 
 # drizzle
 drizzle/meta/_journal.json.bak
