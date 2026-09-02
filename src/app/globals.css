@@ -1,26 +1,175 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Briefing Room — the design system (PRD §9)
+   ==========================================================================
+   Colour grammar (§9.2): chrome is neutral, colour is meaning.
+     Kognoz Blue  = human judgement & action
+     Konverz Cyan = machine intelligence & signal
+     Green        = ONLY won, synced, verified
+   Never two brand colours on one element. No gradients in-app.
+   ========================================================================== */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces & ink */
+  --gs-ink: #0b1e2d;
+  --gs-paper: #fbfcfd;
+  --gs-panel: #f6f8fa;
+  --gs-line: #e3e8ee;
+  --gs-muted: #5a7284;
+  --gs-faint: #8ca2b0;
+
+  /* Brand — strict grammar, see above */
+  --gs-blue: #005184;
+  --gs-cyan: #009dbf;
+  --gs-cyan-bright: #22c3e6; /* §14 open item: confirm against the logo SVG */
+
+  /* Status */
+  --gs-green: #75a02f;
+  --gs-green-text: #4f7a1b;
+  --gs-green-bg: #edf4e3;
+  --gs-amber: #b45309;
+  --gs-red: #c0392b;
+
+  /* Semantic aliases — components use these, never the raw ramp */
+  --gs-bg: var(--gs-paper);
+  --gs-surface: #ffffff;
+  --gs-text: var(--gs-ink);
+  --gs-text-muted: var(--gs-muted);
+  --gs-text-faint: var(--gs-faint);
+  --gs-border: var(--gs-line);
+  --gs-accent: var(--gs-blue);
+  --gs-signal: var(--gs-cyan);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
+/* "Late shift" — the evening review theme (§9.8). Ink becomes the surface,
+   paper becomes the text; the colour grammar is unchanged. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --gs-bg: #071722;
+    --gs-surface: var(--gs-ink);
+    --gs-panel: #102a3a;
+    --gs-text: #eef4f8;
+    --gs-text-muted: #9fb4c2;
+    --gs-text-faint: #6f8797;
+    --gs-border: #1d3a4d;
+    --gs-accent: #4a9fd4;
+    --gs-signal: #22c3e6;
+    --gs-green-text: #a3cc63;
+    --gs-green-bg: #1b2b16;
   }
 }
 
+:root[data-theme="dark"] {
+  --gs-bg: #071722;
+  --gs-surface: var(--gs-ink);
+  --gs-panel: #102a3a;
+  --gs-text: #eef4f8;
+  --gs-text-muted: #9fb4c2;
+  --gs-text-faint: #6f8797;
+  --gs-border: #1d3a4d;
+  --gs-accent: #4a9fd4;
+  --gs-signal: #22c3e6;
+  --gs-green-text: #a3cc63;
+  --gs-green-bg: #1b2b16;
+}
+
+@theme inline {
+  --color-ink: var(--gs-ink);
+  --color-paper: var(--gs-paper);
+  --color-panel: var(--gs-panel);
+  --color-line: var(--gs-border);
+  --color-muted: var(--gs-text-muted);
+  --color-faint: var(--gs-text-faint);
+  --color-surface: var(--gs-surface);
+  --color-canvas: var(--gs-bg);
+  --color-body: var(--gs-text);
+
+  --color-blue: var(--gs-blue);
+  --color-cyan: var(--gs-signal);
+  --color-cyan-bright: var(--gs-cyan-bright);
+  --color-accent: var(--gs-accent);
+
+  --color-won: var(--gs-green);
+  --color-won-text: var(--gs-green-text);
+  --color-won-bg: var(--gs-green-bg);
+  --color-amber: var(--gs-amber);
+  --color-danger: var(--gs-red);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-poppins), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* §9.4 — three-pane studio on an 8px grid */
+  --spacing-rail: 3.5rem;      /* 56px collapsed */
+  --spacing-rail-open: 11rem;  /* 176px expanded */
+  --spacing-inspector: 20rem;  /* 320px */
+  --spacing-row: 2rem;         /* 32px table rows */
+
+  /* §9.6 — 150-200ms ease-out, nothing showier */
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html {
+  background: var(--gs-bg);
+  color: var(--gs-text);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--gs-bg);
+  color: var(--gs-text);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 0.8125rem; /* 13px UI (§9.3) */
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* §9.3 — tabular numerals on EVERY money and count column, so digits align
+   down a table and numbers stop jittering as values change. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* §9.3 — chat prose: 15px, generous leading, capped at 68 characters. */
+.prose-chat {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  max-width: 68ch;
+}
+
+/* §9.5 / §9.9 — the cyan hairline marking a block as engine-authored.
+   This is the single most load-bearing piece of the visual grammar: it is how
+   the operator tells machine output from their own judgement at a glance. */
+.engine-mark {
+  border-left: 2px solid var(--gs-signal);
+  padding-left: 0.875rem;
+}
+
+/* §9.6 — one 2-second green pulse on a newly added row. Never repeated. */
+@keyframes gs-added-pulse {
+  0%   { background-color: var(--gs-green-bg); }
+  100% { background-color: transparent; }
+}
+.row-added {
+  animation: gs-added-pulse 2s var(--ease-out-soft) 1;
+}
+
+/* §9.8 — honour prefers-reduced-motion. MotionConfig covers Motion-driven
+   animation; this covers everything CSS drives. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* §9.8 — cyan focus rings, visible on keyboard navigation only. */
+:focus-visible {
+  outline: 2px solid var(--gs-signal);
+  outline-offset: 2px;
+  border-radius: 2px;
 }

@@ -1,0 +1,251 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  BarChart3,
+  Building2,
+  CalendarClock,
+  MessageSquare,
+  PanelRight,
+  Settings,
+  Table2,
+} from "lucide-react";
+
+import { cn } from "@/lib/cn";
+
+/* §2 — the rail. Order matters: it is the operator's daily loop, top to
+   bottom, not an alphabetised menu. */
+const NAV = [
+  { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/today", label: "Today", icon: CalendarClock },
+  { href: "/pipeline", label: "Pipeline", icon: Table2 },
+  { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
+  { href: "/accounts", label: "Accounts", icon: Building2 },
+  { href: "/settings", label: "Settings", icon: Settings },
+] as const;
+
+export function Rail() {
+  const pathname = usePathname();
+
+  return (
+    <nav
+      aria-label="Sections"
+      className="hidden w-rail-open shrink-0 flex-col gap-0.5 border-r border-line bg-panel p-2 md:flex"
+    >
+      <div className="px-2 pb-4 pt-2">
+        <Wordmark />
+      </div>
+      {NAV.map(({ href, label, icon: Icon }) => {
+        const active = pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={href}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "flex items-center gap-2.5 rounded px-2 py-1.5 transition-colors duration-150",
+              active
+                ? "bg-surface font-medium text-accent"
+                : "text-muted hover:bg-surface hover:text-body",
+            )}
+          >
+            <Icon aria-hidden className="size-4 shrink-0" strokeWidth={1.75} />
+            <span>{label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * §9.2 — the ▸ is Konverz cyan, the wordmark is ink. Two colours, one rule each.
+ * Stacked deliberately: the two brands sit on one line and the product name
+ * beneath, so the lockup never breaks mid-phrase in the 176px rail.
+ */
+export function Wordmark() {
+  return (
+    <span className="flex flex-col leading-tight">
+      <span className="font-display text-[13px] tracking-tight whitespace-nowrap text-body">
+        KOGNOZ <span className="text-cyan">▸</span> KONVERZ
+      </span>
+      <span className="text-[11px] text-muted">Growth Studio</span>
+    </span>
+  );
+}
+
+/* §2 — top bar: programme state on the left, the one pending action on the
+   right. Numbers are tabular so they stop jittering as they update. */
+export function TopBar({
+  month = 1,
+  open = 0,
+  closed = 0,
+  pace = 0,
+  dueToday = 0,
+  pendingZoho = 0,
+  onToggleInspector,
+}: {
+  month?: number;
+  open?: number;
+  closed?: number;
+  pace?: number;
+  dueToday?: number;
+  pendingZoho?: number;
+  onToggleInspector?: () => void;
+}) {
+  const behind = closed < pace;
+  return (
+    <header className="flex h-12 shrink-0 items-center gap-5 border-b border-line bg-surface px-4">
+      <span className="md:hidden">
+        <Wordmark />
+      </span>
+      <Stat label="Month" value={`${month}/18`} />
+      <Stat label="Open" value={fmtMoney(open)} />
+      <Stat
+        label="Closed vs pace"
+        value={fmtMoney(closed)}
+        tone={behind ? "amber" : "won"}
+        hint={`pace ${fmtMoney(pace)}`}
+      />
+      <Stat label="Due today" value={String(dueToday)} tone={dueToday > 0 ? "amber" : undefined} />
+
+      <div className="ml-auto flex items-center gap-2">
+        {pendingZoho > 0 && (
+          <button
+            type="button"
+            className="rounded bg-accent px-2.5 py-1 text-[13px] font-medium text-white transition-opacity duration-150 hover:opacity-90"
+          >
+            Push {pendingZoho} to Zoho
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onToggleInspector}
+          aria-label="Toggle inspector"
+          className="rounded p-1.5 text-muted transition-colors duration-150 hover:bg-panel hover:text-body"
+        >
+          <PanelRight aria-hidden className="size-4" strokeWidth={1.75} />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: "amber" | "won";
+}) {
+  return (
+    <div className="hidden flex-col leading-tight sm:flex">
+      <span className="text-[11px] text-faint">{label}</span>
+      <span
+        className={cn(
+          "num text-[13px] font-medium",
+          tone === "amber" && "text-amber",
+          tone === "won" && "text-won-text",
+        )}
+      >
+        {value}
+        {hint && <span className="ml-1 text-[11px] font-normal text-faint">{hint}</span>}
+      </span>
+    </div>
+  );
+}
+
+/** §2 — status line: what the machine is doing, always visible, never modal. */
+export function StatusLine({
+  sweep,
+  triggersToday = 0,
+  lastZohoSync,
+  error,
+}: {
+  sweep?: { done: number; total: number };
+  triggersToday?: number;
+  lastZohoSync?: string;
+  error?: string;
+}) {
+  const sweeping = sweep && sweep.done < sweep.total;
+  return (
+    <div className="relative flex h-7 shrink-0 items-center gap-4 border-t border-line bg-panel px-4 text-[11px] text-muted">
+      {/* §9.6 — sweep progress is a thin cyan bar, not a spinner or a modal. */}
+      {sweeping && (
+        <span
+          aria-hidden
+          className="absolute inset-x-0 top-0 h-0.5 bg-cyan transition-[width] duration-300"
+          style={{ width: `${(sweep.done / sweep.total) * 100}%` }}
+        />
+      )}
+      <span>
+        {sweeping ? `Sweeping ${sweep.done}/${sweep.total}` : "Sweeps idle"}
+      </span>
+      <span className="num">{triggersToday} triggers today</span>
+      <span>Zoho {lastZohoSync ? `synced ${lastZohoSync}` : "not connected"}</span>
+      {error && <span className="text-danger">{error}</span>}
+    </div>
+  );
+}
+
+/**
+ * §9.9 — the inspector. Shows the selected card, or a snapshot when nothing
+ * is selected. It is never empty: an empty panel teaches nothing.
+ */
+export function Inspector({ children }: { children?: React.ReactNode }) {
+  return (
+    <aside
+      aria-label="Inspector"
+      className="hidden w-inspector shrink-0 overflow-y-auto border-l border-line bg-panel p-4 xl:block"
+    >
+      {children ?? <InspectorSnapshot />}
+    </aside>
+  );
+}
+
+function InspectorSnapshot() {
+  return (
+    <div className="space-y-1.5">
+      <h2 className="font-display text-[13px] text-body">Snapshot</h2>
+      <p className="text-[13px] leading-relaxed text-muted">
+        Nothing selected. Pick a row in Pipeline, or ask the engine what is moving in a market.
+      </p>
+    </div>
+  );
+}
+
+/** §9.4 — the three-pane studio: rail, fluid workspace, 320px inspector. */
+export function StudioShell({
+  children,
+  inspector,
+  topBar,
+  statusLine,
+}: {
+  children: React.ReactNode;
+  inspector?: React.ReactNode;
+  topBar?: React.ReactNode;
+  statusLine?: React.ReactNode;
+}) {
+  return (
+    <div className="flex h-dvh flex-col bg-canvas text-body">
+      {topBar}
+      <div className="flex min-h-0 flex-1">
+        <Rail />
+        <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+        <Inspector>{inspector}</Inspector>
+      </div>
+      {statusLine}
+    </div>
+  );
+}
+
+function fmtMoney(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  return `$${n}`;
+}

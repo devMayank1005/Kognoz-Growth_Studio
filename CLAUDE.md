@@ -24,6 +24,12 @@ TanStack Query + Table · Zustand · Zod · Vitest · Playwright
 - **`middleware.ts` does not exist here — it is `proxy.ts`**, exporting `export function proxy(request)`.
   Node runtime only; `edge` is not supported in `proxy`.
 - Turbopack is the default bundler.
+- **Theme toggle trap:** setting `data-theme` on `<html>` from client JS after
+  hydration causes a React hydration mismatch (verified in-session). When the
+  Late Shift toggle is built, set it from a small blocking inline script in
+  `<head>` that runs before React hydrates — not from an effect.
+- Port 3000 is usually taken by the separate Kognoz Social Studio app on this
+  machine, so `pnpm dev` typically lands on 3001. Check the startup log.
 - Full breaking-change list: `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`.
 
 ## Anthropic API rules (do not regress these)
