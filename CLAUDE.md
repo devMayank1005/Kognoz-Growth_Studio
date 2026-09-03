@@ -31,6 +31,16 @@ TanStack Query + Table · Zustand · Zod · Vitest · Playwright
 - Port 3000 is usually taken by the separate Kognoz Social Studio app on this
   machine, so `pnpm dev` typically lands on 3001. Check the startup log.
 
+## Git
+
+Commit as the repo's own configured identity — **devMayank1005 <devmayank1005@gmail.com>**. Never
+pass `-c user.email=...` to override it.
+
+Do **not** add `Co-Authored-By:` trailers. This project deploys from Vercel on the **Hobby** plan,
+which does not allow collaborators on a private repo: a commit whose author or co-author is not the
+project owner is refused with *"the commit author did not have contributing access"*. Twenty commits
+were rewritten once already for exactly this.
+
 ## Deployment
 
 Production: **https://kognoz-growthstudio.vercel.app** (Vercel). Runbook: `docs/DEPLOY.md`.
