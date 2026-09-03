@@ -21,7 +21,7 @@ export function PanelChart({ rows }: { rows: Array<{ name: string; value: number
           <XAxis dataKey="name" tick={axis} tickLine={false} axisLine={false} interval={0} />
           <YAxis tick={axis} tickLine={false} axisLine={false} />
           <Tooltip cursor={{ fill: "var(--gs-panel)" }} contentStyle={tooltip} formatter={(v) => [`$${Number(v ?? 0)}K`, "value"]} />
-          <Bar dataKey="value" fill="var(--gs-signal)" radius={[2, 2, 0, 0]} />
+          <Bar dataKey="value" fill="var(--gs-signal)" radius={[2, 2, 0, 0]} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -49,8 +49,8 @@ export function CurveChart({ points }: { points: CurvePoint[] }) {
           <XAxis dataKey="month" tick={axis} tickLine={false} axisLine={false} />
           <YAxis tick={axis} tickLine={false} axisLine={false} tickFormatter={(v: number) => `$${Math.round(v / 1000)}M`} />
           <Tooltip contentStyle={tooltip} formatter={(v) => [`$${Number(v ?? 0)}K`, ""]} />
-          <Line type="monotone" dataKey="target" stroke="var(--gs-accent)" strokeWidth={2} dot={false} name="Target" />
-          <Line type="monotone" dataKey="closed" stroke="var(--gs-green)" strokeWidth={2} dot={false} connectNulls={false} name="Closed" />
+          <Line type="monotone" dataKey="target" stroke="var(--gs-accent)" strokeWidth={2} dot={false} name="Target" isAnimationActive={false} />
+          <Line type="monotone" dataKey="closed" stroke="var(--gs-green)" strokeWidth={2} dot={false} connectNulls={false} name="Closed" isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

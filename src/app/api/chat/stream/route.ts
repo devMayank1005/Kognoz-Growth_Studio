@@ -10,6 +10,7 @@ import { checkBudget, logModelCall } from "@/engine/budget";
 import { EXTRACT_MODEL, PROSE_MODEL, extractRows, readUsage, streamProse, webSearchError } from "@/engine/client";
 import { matchIntent } from "@/engine/local";
 import { buildLiveState } from "@/engine/state";
+import { appendTurns, type ThreadTurn } from "@/db/threads";
 import { requireSession } from "@/lib/session";
 import { eq } from "drizzle-orm";
 
@@ -40,6 +41,29 @@ export async function POST(request: Request) {
     async start(controller) {
       const send = (event: string, data: unknown) => {
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+
+      /**
+       * Save the exchange so a refresh does not lose it.
+       *
+       * Deliberately server-side and before `controller.close()`: the operator
+       * may have refreshed or closed the tab while the engine was still
+       * writing, and the answer should still be waiting for them. A client-side
+       * save would be lost in exactly the case that matters most.
+       *
+       * Never fatal — a thread that cannot be written must not take down the
+       * answer the operator is already reading.
+       */
+      const persist = async (answer: Pick<ThreadTurn, "text" | "chart" | "rows">) => {
+        try {
+          const at = new Date().toISOString();
+          await appendTurns(session.orgId, session.userId, [
+            { role: "user", text: message, at },
+            { role: "engine", kind: "answer", at, ...answer },
+          ]);
+        } catch (err) {
+          console.error("[chat] could not persist the turn", err);
+        }
       };
 
       try {
@@ -76,6 +100,7 @@ export async function POST(request: Request) {
           send("delta", { text: local.text });
           send("rows", { chart: local.chart, rows: local.rows });
           send("done", { source: "local" });
+          await persist({ text: local.text, chart: local.chart, rows: local.rows });
           controller.close();
           return;
         }
@@ -181,6 +206,8 @@ export async function POST(request: Request) {
         }
 
         // ------------------------------------------------------ 4. Phase B
+        let answerChart: ThreadTurn["chart"] = null;
+        let answerRows: ThreadTurn["rows"] = [];
         try {
           const extractStarted = Date.now();
           const { extraction, usage: extractUsage } = await extractRows({ prose, liveState });
@@ -191,6 +218,8 @@ export async function POST(request: Request) {
             usage: extractUsage,
             latencyMs: Date.now() - extractStarted,
           });
+          answerChart = extraction.chart;
+          answerRows = extraction.rows;
           send("rows", { chart: extraction.chart, rows: extraction.rows });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
@@ -201,6 +230,8 @@ export async function POST(request: Request) {
         }
 
         send("done", { source: "engine", cacheRead: usage.cacheReadTokens });
+        // The prose stands even when extraction failed, so persist either way.
+        await persist({ text: prose, chart: answerChart, rows: answerRows });
         controller.close();
       } catch (err) {
         console.error("[chat] stream failed", err);

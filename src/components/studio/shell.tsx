@@ -12,7 +12,9 @@ import {
   Table2,
 } from "lucide-react";
 
+import { UserMenu, type StudioUser } from "@/components/studio/user-menu";
 import { cn } from "@/lib/cn";
+import { useWorkspace } from "@/store/selection";
 
 /* §2 — the rail. Order matters: it is the operator's daily loop, top to
    bottom, not an alphabetised menu. */
@@ -120,7 +122,7 @@ export function TopBar({
   pace = 0,
   dueToday = 0,
   pendingZoho = 0,
-  onToggleInspector,
+  user,
 }: {
   month?: number;
   open?: number;
@@ -128,9 +130,13 @@ export function TopBar({
   pace?: number;
   dueToday?: number;
   pendingZoho?: number;
-  onToggleInspector?: () => void;
+  user?: StudioUser;
 }) {
   const behind = closed < pace;
+  // Read straight from the store rather than taking a callback: the studio
+  // layout is a server component, so it could never pass one — which is why
+  // this button did nothing at all until now.
+  const toggleInspector = useWorkspace((s) => s.toggleInspector);
   return (
     <header className="flex h-12 shrink-0 items-center gap-5 border-b border-line bg-surface px-4">
       {/* The wordmark replaces the rail's branding on small screens. */}
@@ -158,12 +164,13 @@ export function TopBar({
         )}
         <button
           type="button"
-          onClick={onToggleInspector}
+          onClick={toggleInspector}
           aria-label="Toggle inspector"
           className="rounded p-1.5 text-muted transition-colors duration-150 hover:bg-panel hover:text-body"
         >
           <PanelRight aria-hidden className="size-4" strokeWidth={1.75} />
         </button>
+        {user && <UserMenu user={user} />}
       </div>
     </header>
   );
@@ -218,8 +225,10 @@ export function StatusLine({
       {sweeping && (
         <span
           aria-hidden
-          className="absolute inset-x-0 top-0 h-0.5 bg-cyan transition-[width] duration-300"
-          style={{ width: `${(sweep.done / sweep.total) * 100}%` }}
+          // scaleX rather than width: width is a layout property, so animating
+          // it re-lays-out the status line on every sweep tick.
+          className="absolute inset-x-0 top-0 h-0.5 origin-left bg-cyan transition-transform duration-300"
+          style={{ transform: `scaleX(${sweep.done / sweep.total})` }}
         />
       )}
       <span>
@@ -241,6 +250,8 @@ export function StatusLine({
  * is selected. It is never empty: an empty panel teaches nothing.
  */
 export function Inspector({ children }: { children?: React.ReactNode }) {
+  const inspectorOpen = useWorkspace((s) => s.inspectorOpen);
+  if (!inspectorOpen) return null;
   return (
     <aside
       aria-label="Inspector"

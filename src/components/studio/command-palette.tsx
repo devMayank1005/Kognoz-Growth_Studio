@@ -14,8 +14,15 @@ import { NAV } from "./shell";
  * typed question is handed straight to Chat rather than making the operator
  * navigate first and retype.
  */
-export function CommandPalette({ accounts }: { accounts: Array<{ id: string; name: string }> }) {
-  const [open, setOpen] = useState(false);
+export function CommandPalette({
+  accounts,
+  defaultOpen = false,
+}: {
+  accounts: Array<{ id: string; name: string }>;
+  /** True when the mount wrapper armed us on the operator's first ⌘K. */
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [query, setQuery] = useState("");
   const router = useRouter();
 

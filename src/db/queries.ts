@@ -5,6 +5,7 @@ import { accounts, activities, opportunities, partnerTowers, people, signals, sw
 import type { SweepItem, UniverseAccount } from "@/domain/scoring";
 import type { TowerKey } from "@/domain/revenue";
 import { TOWER_KEYS } from "@/domain/practices";
+import { cache } from "react";
 
 /**
  * Read models for the engine and the studio.
@@ -108,7 +109,9 @@ export interface PipelineCardRow {
   zohoSyncedAt: string;
 }
 
-export async function loadPipeline(orgId: string): Promise<PipelineCardRow[]> {
+// Deduped per request: the studio layout and /today, /pipeline and /dashboard
+// each load it, which meant the same full scan two or three times per view.
+export const loadPipeline = cache(async function loadPipeline(orgId: string): Promise<PipelineCardRow[]> {
   const rows = await db
     .select({
       id: opportunities.id,
@@ -161,7 +164,7 @@ export async function loadPipeline(orgId: string): Promise<PipelineCardRow[]> {
     signal: r.signal ?? "",
     zohoSyncedAt: r.zohoSyncedAt ? r.zohoSyncedAt.toISOString() : "",
   }));
-}
+});
 
 /** Tower → partner name, for routing and for the live-state block. */
 export async function loadPartnersByTower(orgId: string): Promise<Record<TowerKey, string>> {
@@ -246,6 +249,22 @@ export interface AccountListRow {
   firstSeen: string | null;
   inPipeline: boolean;
 }
+
+/**
+ * Just what ⌘K needs to jump to an account.
+ *
+ * The palette used to be fed by `loadAccountList`, the most expensive query in
+ * the app — two left joins, two count(distinct) and a sort over an aggregate —
+ * run on EVERY route to render a list of names. This is the same list without
+ * the arithmetic nobody was reading.
+ */
+export const loadAccountOptions = cache(async function loadAccountOptions(orgId: string) {
+  return db
+    .select({ id: accounts.id, name: accounts.name })
+    .from(accounts)
+    .where(eq(accounts.orgId, orgId))
+    .orderBy(accounts.name);
+});
 
 /** The account universe (§9.9), with live signal counts. */
 export async function loadAccountList(orgId: string): Promise<AccountListRow[]> {

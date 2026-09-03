@@ -11,9 +11,14 @@ disagree, the PRD wins on scope and the prototype wins on behaviour.
 
 ## Stack
 
-Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · shadcn/ui · Motion
+Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · Motion
 Neon Postgres · Drizzle · Better Auth · Inngest · Anthropic SDK
-TanStack Query + Table · Zustand · Zod · Vitest · Playwright
+Zustand · Zod · Vitest · Playwright
+
+**TanStack Query and Table were removed** (2026-09-03): nothing called `useQuery`/`useMutation` and
+Table was never imported, so both shipped on every route doing nothing. Every page loads its data in
+a server component. Either can return in one line when something actually needs client-side caching.
+shadcn/ui is not installed either — there is no `src/components/ui/`, no radix; the UI is hand-rolled.
 
 ## Next.js 16 gotchas (this is not Next 14/15)
 
@@ -40,6 +45,18 @@ Do **not** add `Co-Authored-By:` trailers. This project deploys from Vercel on t
 which does not allow collaborators on a private repo: a commit whose author or co-author is not the
 project owner is refused with *"the commit author did not have contributing access"*. Twenty commits
 were rewritten once already for exactly this.
+
+## Environment variables
+
+**Read every env var through `src/lib/env.ts` (`readEnv` / `requireEnv`), never `process.env`
+directly.** An eslint rule enforces this under `src/` (with `env.ts`, tests, and `NODE_ENV` exempt).
+
+A trailing newline on `MICROSOFT_TENANT_ID` in Vercel cost hours: Better Auth builds
+`${authority}/${tenant}/oauth2/v2.0/token`, so the request went to `.../{tenant}%0A/oauth2/v2.0/token`
+and Microsoft refused the URL before Entra ever saw it. It surfaced only as a sign-in redirect loop —
+the authorize leg builds a `URL`, and the WHATWG parser strips control characters, so that half
+worked perfectly. `readEnv` strips whitespace and its percent-encoded forms (`%0A`, `%0D`, `%09`) at
+the ends only, and warns once per variable so the value still gets fixed at source.
 
 ## Deployment
 
@@ -90,6 +107,21 @@ region-move plan: `docs/CLAIM-NEON.md`.
 - **DNC blocks add, draft, and packet** — every path, enforced in the domain layer.
 - Every mutation writes an audit entry.
 - Org isolation is enforced twice: `orgId` in the repository layer *and* Postgres RLS.
+
+## State that survives a refresh
+
+Two layers, deliberately separate:
+
+- **Server** — the chat thread. `api/chat/stream/route.ts` calls `appendTurns` when generation
+  completes, *before* closing the stream, so an answer still lands in history if the operator
+  refreshed or closed the tab mid-stream. `chat/page.tsx` server-renders it; there is no client
+  fetch on mount.
+- **Browser** — `useWorkspace` in `src/store/selection.ts` (zustand `persist`): composer draft,
+  selected card **id**, inspector open/closed, pipeline cursor. **Ids and view state only, never
+  server-owned rows** — a restored row would show stale numbers. `skipHydration` is set and the
+  store rehydrates after mount (`providers.tsx`); reading storage during the first render would be a
+  hydration mismatch. Access `.persist` optionally — zustand attaches no persist API at all when the
+  browser blocks storage.
 
 ## Layout
 

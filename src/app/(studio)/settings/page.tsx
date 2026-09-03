@@ -31,6 +31,7 @@ export default async function SettingsPage() {
         radarMarkets={cfg?.radarMarkets ?? []}
         dailyCallBudget={cfg?.dailyCallBudget ?? 60}
         dnc={dncList}
+        user={{ name: session.name, email: session.email, orgName: session.orgName }}
       />
     </div>
   );

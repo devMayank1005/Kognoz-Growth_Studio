@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { cache } from "react";
+
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -41,12 +43,16 @@ export interface StudioSession {
  * this validates the session and resolves which org and role the request runs
  * as. The orgId it returns is what `withOrg()` pins for RLS.
  *
+ * Wrapped in React `cache()` so it runs once per request: the studio layout
+ * and the page beneath it both call it, which was two session lookups and two
+ * membership joins for every page view.
+ *
  * It also PROVISIONS membership just in time: anyone from an allowed domain
  * gets a workspace on first sign-in, with no admin step. Done here rather than
  * in a user-creation hook because that hook fires only for new users and would
  * never repair an account that already exists without a membership.
  */
-export async function requireSession(): Promise<StudioSession> {
+export const requireSession = cache(async function requireSession(): Promise<StudioSession> {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user) redirect("/sign-in");
 
@@ -68,7 +74,7 @@ export async function requireSession(): Promise<StudioSession> {
     orgName: membership.orgName,
     role: (membership.role as Role) ?? "viewer",
   };
-}
+});
 
 interface Membership {
   orgId: string;

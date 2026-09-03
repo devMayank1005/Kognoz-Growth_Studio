@@ -1,17 +1,30 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
+import type { ThreadTurn } from "@/db/threads";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
+import { useWorkspace } from "@/store/selection";
 
 import { ActionTable } from "./action-table";
-import { EngineChartBlock } from "./engine-chart";
+
+/**
+ * Recharts is 366 KB and most answers have no chart, but a static import put it
+ * in the first load of `/chat` — which is where `/` redirects, so it was the
+ * price of opening the app. Loaded on the first answer that actually has one.
+ */
+const EngineChartBlock = dynamic(() => import("./engine-chart").then((m) => m.EngineChartBlock), {
+  loading: () => <div className="mt-4 h-40 animate-pulse rounded bg-panel" aria-label="Loading chart" />,
+});
 
 interface Turn {
+  /** Stable across re-renders, so the list is not keyed by array index. */
+  id: string;
   role: "user" | "engine";
   /** "brief" gets the §9.9 headline treatment; everything else is an answer. */
   kind?: "brief" | "answer";
@@ -26,6 +39,34 @@ interface Turn {
   source?: "local" | "engine";
 }
 
+/** `add Emaar for Hire at 300K` — a direct action, not a chat answer. */
+async function runAddIntent(action: { company: string; solution?: string; value?: number }): Promise<string> {
+  const result = await addCard(
+    {
+      company: action.company,
+      solution: action.solution ?? "Organization Transformation",
+      value: action.value,
+      contact_name: "",
+      contact_title: "",
+      country: "",
+      industry: "",
+      trigger: "Added directly by the operator",
+      signal: "",
+      url: "",
+    },
+    // Operator intent skips Prospect and opens Tagged (PRD §5).
+    { stage: "Plan reach-out" },
+  );
+
+  if (result.ok) {
+    const summary = `${result.practice} · ${result.tower} · ${result.partner} · $${Math.round(result.value / 1000)}K · Tagged`;
+    toast.success(`${result.account} added`, { description: summary });
+    return `Added ${result.account} — ${summary}.`;
+  }
+  toast.error(result.message);
+  return result.message;
+}
+
 const SUGGESTIONS = [
   "what's moving in UAE",
   "who should I open first",
@@ -33,49 +74,80 @@ const SUGGESTIONS = [
   "what's due today",
 ];
 
-export function Chat() {
+export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
   const params = useSearchParams();
-  const [turns, setTurns] = useState<Turn[]>([]);
-  // ⌘K hands a typed question through as ?q= so the operator does not have to
-  // navigate here and retype it (§9.9).
-  const [input, setInput] = useState(() => params.get("q") ?? "");
-  const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
 
-  // Load persisted history on mount. This is how the morning brief — written
-  // overnight by the scheduled sweep — is waiting when the operator opens the
-  // app, with no model call.
+  // History arrives server-rendered. It used to be fetched from /api/thread in
+  // a mount effect, which meant html -> hydrate -> fetch -> render before the
+  // operator saw yesterday's brief, and an unconditional setTurns that could
+  // land mid-send and wipe the turns already on screen.
+  const [turns, setTurns] = useState<Turn[]>(() =>
+    initialTurns.map((t, i) => ({ ...t, id: `h${i}-${t.at}` })),
+  );
+
+  // ⌘K hands a typed question through as ?q= so the operator does not have to
+  // navigate here and retype it (§9.9). Otherwise the composer picks up the
+  // draft the operator was part-way through when the page last unloaded.
+  const draft = useWorkspace((s) => s.draft);
+  const setDraft = useWorkspace((s) => s.setDraft);
+  const handover = params.get("q");
+  const input = handover ?? draft;
+  const setInput = useCallback(
+    (value: string) => {
+      setDraft(value);
+    },
+    [setDraft],
+  );
+
+  const [busy, setBusy] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+  /** False once the operator scrolls up to read — do not yank them back down. */
+  const pinnedRef = useRef(true);
+  const rafRef = useRef<number | null>(null);
+
+  // The ?q= handover is a one-shot: fold it into the draft so it is not
+  // re-applied on every render and survives as normal draft text.
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/thread")
-      .then((r) => (r.ok ? r.json() : { turns: [] }))
-      .then((d) => {
-        if (cancelled) return;
-        setTurns(d.turns ?? []);
-        setLoaded(true);
-        requestAnimationFrame(() => endRef.current?.scrollIntoView());
-      })
-      .catch(() => setLoaded(true));
-    return () => {
-      cancelled = true;
-    };
+    if (handover) setDraft(handover);
+  }, [handover, setDraft]);
+
+  /**
+   * Scrolling is coalesced into one frame. This used to fire a smooth
+   * scrollIntoView per streamed token, stacking hundreds of competing
+   * animations that cancelled each other and thrashed the scroller.
+   */
+  const scrollToEnd = useCallback(() => {
+    if (!pinnedRef.current || rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      endRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
   }, []);
 
-  const scrollToEnd = () => requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth" }));
+  useEffect(() => () => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+  }, []);
 
-  async function send(message: string) {
+  const send = useCallback(async function send(message: string) {
     const text = message.trim();
     if (!text || busy) return;
 
     setInput("");
     setBusy(true);
-    setTurns((t) => [...t, { role: "user", text }, { role: "engine", text: "", awaitingRows: true }]);
+
+    // Patch by id, not by a position computed from the render closure: the old
+    // `turns.length + 1` was a bet that nothing else had appended in between.
+    const engineId = `e${Date.now()}`;
+    pinnedRef.current = true;
+    setTurns((t) => [
+      ...t,
+      { id: `u${Date.now()}`, role: "user", text },
+      { id: engineId, role: "engine", text: "", awaitingRows: true },
+    ]);
     scrollToEnd();
 
-    const engineIndex = turns.length + 1;
     const patch = (fn: (turn: Turn) => Turn) =>
-      setTurns((t) => t.map((turn, i) => (i === engineIndex ? fn(turn) : turn)));
+      setTurns((t) => t.map((turn) => (turn.id === engineId ? fn(turn) : turn)));
 
     try {
       const response = await fetch("/api/chat/stream", {
@@ -144,79 +216,25 @@ export function Chat() {
       setBusy(false);
       scrollToEnd();
     }
-  }
+  }, [busy, setInput, scrollToEnd]);
 
-  /** `add Emaar for Hire at 300K` — a direct action, not a chat answer. */
-  async function runAddIntent(action: { company: string; solution?: string; value?: number }): Promise<string> {
-    const result = await addCard(
-      {
-        company: action.company,
-        solution: action.solution ?? "Organization Transformation",
-        value: action.value,
-        contact_name: "",
-        contact_title: "",
-        country: "",
-        industry: "",
-        trigger: "Added directly by the operator",
-        signal: "",
-        url: "",
-      },
-      // Operator intent skips Prospect and opens Tagged (PRD §5).
-      { stage: "Plan reach-out" },
-    );
-
-    if (result.ok) {
-      const summary = `${result.practice} · ${result.tower} · ${result.partner} · $${Math.round(result.value / 1000)}K · Tagged`;
-      toast.success(`${result.account} added`, { description: summary });
-      return `Added ${result.account} — ${summary}.`;
-    }
-    toast.error(result.message);
-    return result.message;
-  }
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 overflow-y-auto px-6 py-8">
+      <div
+        className="flex-1 overflow-y-auto px-6 py-8"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+      >
         <div className="mx-auto max-w-3xl">
-          {loaded && turns.length === 0 && <EmptyState onPick={send} />}
+          {turns.length === 0 && <EmptyState onPick={send} />}
 
           <AnimatePresence initial={false}>
-            {turns.map((turn, i) =>
-              turn.role === "user" ? (
-                <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-6 flex justify-end">
-                  <p className="max-w-[80%] rounded bg-panel px-3 py-2 text-[13px] text-body">{turn.text}</p>
-                </motion.div>
-              ) : (
-                <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8">
-                  {/* §9.5 — the cyan hairline marks this block as engine-authored. */}
-                  <div className="engine-mark">
-                    {turn.kind === "brief" && (
-                      <p className="mb-1 font-display text-[13px] tracking-tight text-body">
-                        Morning brief
-                      </p>
-                    )}
-                    {/* Progress is the engine working, not its answer. It is
-                        replaced the moment real text arrives. */}
-                    {!turn.text && turn.progress && (
-                      <p className="flex items-center gap-2 text-[13px] text-faint">
-                        <span className="size-1.5 animate-pulse rounded-full bg-cyan" />
-                        {turn.progress}
-                      </p>
-                    )}
-                    {turn.text && (
-                      <p className="prose-chat whitespace-pre-wrap text-body">{turn.text}</p>
-                    )}
-                    {!turn.text && !turn.progress && !turn.error && (
-                      <p className="text-[13px] text-faint">…</p>
-                    )}
-                    {turn.chart && <EngineChartBlock chart={turn.chart} />}
-                    {turn.awaitingRows && turn.text && <RowSkeleton />}
-                    {turn.rows && turn.rows.length > 0 && <ActionTable rows={turn.rows} />}
-                    {turn.error && <p className="mt-2 text-[13px] text-amber">{turn.error}</p>}
-                  </div>
-                </motion.div>
-              ),
-            )}
+            {turns.map((turn) => (
+              <TurnView key={turn.id} turn={turn} />
+            ))}
           </AnimatePresence>
           <div ref={endRef} />
         </div>
@@ -250,6 +268,48 @@ export function Chat() {
     </div>
   );
 }
+
+/**
+ * One turn, memoized.
+ *
+ * While an answer streams, `patch` replaces only the streaming turn's object,
+ * so every other turn keeps its identity and this re-render is skipped. Without
+ * it, a 200-turn thread re-rendered every Motion component on every token.
+ */
+const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
+  if (turn.role === "user") {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-6 flex justify-end">
+        <p className="max-w-[80%] rounded bg-panel px-3 py-2 text-[13px] text-body">{turn.text}</p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-8">
+      {/* §9.5 — the cyan hairline marks this block as engine-authored. */}
+      <div className="engine-mark">
+        {turn.kind === "brief" && (
+          <p className="mb-1 font-display text-[13px] tracking-tight text-body">Morning brief</p>
+        )}
+        {/* Progress is the engine working, not its answer. It is replaced the
+            moment real text arrives. */}
+        {!turn.text && turn.progress && (
+          <p className="flex items-center gap-2 text-[13px] text-faint">
+            <span className="size-1.5 animate-pulse rounded-full bg-cyan" />
+            {turn.progress}
+          </p>
+        )}
+        {turn.text && <p className="prose-chat whitespace-pre-wrap text-body">{turn.text}</p>}
+        {!turn.text && !turn.progress && !turn.error && <p className="text-[13px] text-faint">…</p>}
+        {turn.chart && <EngineChartBlock chart={turn.chart} />}
+        {turn.awaitingRows && turn.text && <RowSkeleton />}
+        {turn.rows && turn.rows.length > 0 && <ActionTable rows={turn.rows} />}
+        {turn.error && <p className="mt-2 text-[13px] text-amber">{turn.error}</p>}
+      </div>
+    </motion.div>
+  );
+});
 
 function EmptyState({ onPick }: { onPick: (q: string) => void }) {
   return (

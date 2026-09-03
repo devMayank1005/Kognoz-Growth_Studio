@@ -1,6 +1,11 @@
 import Link from "next/link";
+import dynamic from "next/dynamic";
 
-import { Kanban } from "@/components/studio/kanban";
+/**
+ * dnd-kit is only needed by the board, but a static import put it in the
+ * pipeline bundle for everyone — and the table is the default view.
+ */
+const Kanban = dynamic(() => import("@/components/studio/kanban").then((m) => m.Kanban));
 import { PipelineTable } from "@/components/studio/pipeline-table";
 import { loadPipeline, type PipelineCardRow } from "@/db/queries";
 import { practiceById, TOWERS } from "@/domain/practices";

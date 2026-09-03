@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 
 import type { PipelineCardRow } from "@/db/queries";
 import { practiceById } from "@/domain/practices";
-import { useSelection } from "@/store/selection";
+import { useSelection, useWorkspace } from "@/store/selection";
 import { cn } from "@/lib/cn";
 
 /**
@@ -38,33 +38,64 @@ export function PipelineTable({
   highlightId?: string;
   onSelect?: (card: PipelineCardRow) => void;
 }) {
-  const [active, setActive] = useState(0);
+  const active = useWorkspace((s) => s.cursor);
+  const setActive = useWorkspace((s) => s.setCursor);
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   const select = useSelection((s) => s.select);
   const selectedId = useSelection((s) => s.card?.id);
+  const selectedCardId = useWorkspace((s) => s.selectedCardId);
 
-  const choose = (card: PipelineCardRow) => {
-    select(card);
-    onSelect?.(card);
-  };
+  const choose = useCallback(
+    (card: PipelineCardRow) => {
+      select(card);
+      onSelect?.(card);
+    },
+    [select, onSelect],
+  );
+
+  // Restore the row the operator had open before the refresh. Matched by id
+  // against the freshly loaded list, so the inspector never shows stale values.
+  useEffect(() => {
+    if (!selectedCardId || selectedId) return;
+    const card = cards.find((c) => c.id === selectedCardId);
+    if (card) select(card);
+  }, [selectedCardId, selectedId, cards, select]);
+
+  // The handler is held in a ref so the listener is bound once. It used to
+  // depend on [cards, active], which tore down and re-added a window listener
+  // on every single arrow keypress.
+  const latest = useRef({ cards, active, choose, setActive });
+  useEffect(() => {
+    latest.current = { cards, active, choose, setActive };
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const { cards, active, choose, setActive } = latest.current;
       if (!cards.length) return;
+
+      // Only when the table has focus. This used to preventDefault on every
+      // arrow key anywhere on the page, hijacking scrolling and caret movement
+      // — including inside the board's stage <select>.
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (!bodyRef.current?.closest("table")?.contains(document.activeElement) && document.activeElement !== document.body) {
+        return;
+      }
+
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setActive((i) => Math.min(i + 1, cards.length - 1));
+        setActive(Math.min(active + 1, cards.length - 1));
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        setActive((i) => Math.max(i - 1, 0));
+        setActive(Math.max(active - 1, 0));
       } else if (e.key === "Enter") {
         choose(cards[active]);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cards, active]);
+  }, []);
 
   if (cards.length === 0) {
     return (

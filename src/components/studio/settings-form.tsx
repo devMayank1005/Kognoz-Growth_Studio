@@ -5,6 +5,8 @@ import { toast } from "sonner";
 
 import { addToDnc, removeFromDnc, renamePartner, saveOrgSettings } from "@/app/actions/settings";
 import { ThemeToggle } from "./theme-toggle";
+import { SignOutButton } from "@/components/auth/sign-out-button";
+import type { StudioUser } from "@/components/studio/user-menu";
 
 interface TowerRow {
   key: string;
@@ -13,13 +15,14 @@ interface TowerRow {
 }
 
 export function SettingsForm({
-  towers, icpText, radarMarkets, dailyCallBudget, dnc,
+  towers, icpText, radarMarkets, dailyCallBudget, dnc, user,
 }: {
   towers: TowerRow[];
   icpText: string;
   radarMarkets: string[];
   dailyCallBudget: number;
   dnc: string[];
+  user: StudioUser;
 }) {
   return (
     <div className="mt-8 space-y-10">
@@ -27,6 +30,7 @@ export function SettingsForm({
       <OrgSettings icpText={icpText} radarMarkets={radarMarkets} dailyCallBudget={dailyCallBudget} />
       <DncList names={dnc} />
       <Appearance />
+      <Account user={user} />
       <Zoho />
     </div>
   );
@@ -180,6 +184,19 @@ function DncList({ names }: { names: string[] }) {
         >
           Block
         </button>
+      </div>
+    </Section>
+  );
+}
+
+function Account({ user }: { user: StudioUser }) {
+  return (
+    <Section title="Account" note="You are signed in through Microsoft Entra.">
+      <p className="text-[13px] text-body">{user.name}</p>
+      <p className="text-[11px] text-faint">{user.email}</p>
+      <p className="mt-1 text-[11px] text-muted">{user.orgName}</p>
+      <div className="mt-3">
+        <SignOutButton />
       </div>
     </Section>
   );
