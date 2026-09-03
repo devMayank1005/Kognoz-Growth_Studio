@@ -3,6 +3,8 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
+import { requireEnv } from "@/lib/env";
+
 import * as schema from "./schema";
 
 /**
@@ -16,10 +18,10 @@ import * as schema from "./schema";
  * Schema migrations use DATABASE_URL_UNPOOLED instead (see drizzle.config.ts):
  * DDL and session-scoped settings must not go through the pooler.
  */
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error("DATABASE_URL is not set. Copy .env.example to .env.local and fill it in.");
-}
+const connectionString = requireEnv(
+  "DATABASE_URL",
+  "Copy .env.example to .env.local and fill it in.",
+);
 
 const globalForDb = globalThis as unknown as { __gsPool?: Pool };
 

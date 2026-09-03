@@ -22,6 +22,7 @@ import { signalByCode } from "@/domain/signals";
 
 import * as schema from "./schema";
 import { SEED_PEOPLE, SEED_UNIVERSE, SIGNAL_FIXTURES } from "./seed-data";
+import { readEnv } from "@/lib/env";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -43,7 +44,7 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => iso(new Date(Date.now() - n * 86_400_000));
 
 async function main() {
-  const url = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+  const url = readEnv("DATABASE_URL_UNPOOLED") ?? readEnv("DATABASE_URL");
   if (!url) throw new Error("DATABASE_URL is not set.");
 
   const pool = new Pool({ connectionString: url });

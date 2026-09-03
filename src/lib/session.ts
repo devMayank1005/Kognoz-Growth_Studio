@@ -8,6 +8,7 @@ import { db } from "@/db/client";
 import { activities, member, organization } from "@/db/schema";
 import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
 import { auth } from "@/lib/auth";
+import { readEnv } from "@/lib/env";
 
 /** The four roles from PRD §1. */
 export type Role = "operator" | "partner" | "viewer" | "admin";
@@ -22,7 +23,7 @@ export type Role = "operator" | "partner" | "viewer" | "admin";
 const DEFAULT_ROLE: Role = "operator";
 
 /** The workspace new members join. */
-const DEFAULT_ORG_SLUG = process.env.DEFAULT_ORG_SLUG ?? "kognoz-konverz";
+const DEFAULT_ORG_SLUG = readEnv("DEFAULT_ORG_SLUG") ?? "kognoz-konverz";
 
 export interface StudioSession {
   userId: string;
@@ -84,7 +85,7 @@ interface Membership {
  * than refusing.
  */
 async function provisionMembership(user: { id: string; email: string }): Promise<Membership | null> {
-  const allowedDomains = parseAllowedDomains(process.env.ALLOWED_EMAIL_DOMAINS);
+  const allowedDomains = parseAllowedDomains(readEnv("ALLOWED_EMAIL_DOMAINS"));
   if (!isAllowedEmailDomain(user.email, allowedDomains)) return null;
 
   const org = await resolveDefaultOrg();

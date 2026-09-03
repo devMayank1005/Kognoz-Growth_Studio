@@ -6,6 +6,7 @@ import { db } from "@/db/client";
 import * as schema from "@/db/schema";
 import { authErrors } from "@/db/schema";
 import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
+import { readEnv, requireEnv } from "@/lib/env";
 
 /**
  * Better Auth owns identity and membership: users, sessions, organizations and
@@ -25,7 +26,7 @@ import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
  *      their own address and would otherwise see the whole pipeline.
  * Membership itself is granted just-in-time in src/lib/session.ts.
  */
-const allowedDomains = parseAllowedDomains(process.env.ALLOWED_EMAIL_DOMAINS);
+const allowedDomains = parseAllowedDomains(readEnv("ALLOWED_EMAIL_DOMAINS"));
 
 if (allowedDomains.length === 0) {
   throw new Error(
@@ -33,22 +34,41 @@ if (allowedDomains.length === 0) {
       "set it to e.g. kognozconsulting.com.",
   );
 }
-const tenantId = process.env.MICROSOFT_TENANT_ID || "common";
+/**
+ * The tenant is interpolated straight into Microsoft's endpoint URLs, and a
+ * malformed value does not fail loudly — a trailing newline in Vercel produced
+ * `.../{tenant}%0A/oauth2/v2.0/token`, which Microsoft refuses as an invalid
+ * URL before Entra sees the request. It surfaced only as a sign-in redirect
+ * loop, because the authorize leg builds a `URL` (whose parser strips control
+ * characters) while the token leg passes a raw string. So validate the shape
+ * here, where the error can say what is wrong.
+ */
+const TENANT_ALIASES = new Set(["common", "organizations", "consumers"]);
+const TENANT_GUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) {
+const tenantId = readEnv("MICROSOFT_TENANT_ID") ?? "common";
+
+if (!TENANT_GUID.test(tenantId) && !TENANT_ALIASES.has(tenantId.toLowerCase())) {
   throw new Error(
-    "MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET are required — Microsoft SSO is the only sign-in path.",
+    "MICROSOFT_TENANT_ID must be a tenant GUID or one of common/organizations/consumers. " +
+      "It goes into Microsoft's endpoint URLs, so a malformed value fails as an unexplained " +
+      "sign-in loop rather than as an error.",
   );
 }
 
+const SSO_HINT = "Microsoft SSO is the only sign-in path.";
+const clientId = requireEnv("MICROSOFT_CLIENT_ID", SSO_HINT);
+const clientSecret = requireEnv("MICROSOFT_CLIENT_SECRET", SSO_HINT);
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
-  baseURL: process.env.BETTER_AUTH_URL,
+  baseURL: readEnv("BETTER_AUTH_URL"),
 
   socialProviders: {
     microsoft: {
-      clientId: process.env.MICROSOFT_CLIENT_ID,
-      clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+      clientId,
+      clientSecret,
       // "common" accepts any Entra tenant. Set MICROSOFT_TENANT_ID to the
       // Kognoz tenant to lock sign-in to the organisation.
       tenantId,

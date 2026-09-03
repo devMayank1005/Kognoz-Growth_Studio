@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
+import { readEnv } from "@/lib/env";
+
 import { ENGINE_SYS, EXTRACT_SYS } from "../../prompts/engine";
 import { engineExtractionSchema, scrubRow, type EngineExtraction } from "./schemas";
 
@@ -24,9 +26,14 @@ export const PROSE_MODEL = "claude-opus-5";
 export const EXTRACT_MODEL = "claude-haiku-4-5";
 export const WEB_SEARCH_TOOL = "web_search_20260209" as const;
 
-const FAST_MODE_ENABLED = process.env.ENABLE_FAST_MODE === "1";
+const FAST_MODE_ENABLED = readEnv("ENABLE_FAST_MODE") === "1";
 
-export const client = new Anthropic();
+/**
+ * The SDK reads ANTHROPIC_API_KEY implicitly, so a trailing newline would reach
+ * an HTTP header and throw. Pass it sanitized; `undefined` leaves the SDK's own
+ * env lookup (and its "missing key" error) exactly as it was.
+ */
+export const client = new Anthropic({ apiKey: readEnv("ANTHROPIC_API_KEY") });
 
 export interface UsageReport {
   inputTokens: number;

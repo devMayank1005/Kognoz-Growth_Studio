@@ -1,5 +1,6 @@
 import { Wordmark } from "@/components/studio/shell";
 import { parseAllowedDomains } from "@/domain/access";
+import { readEnv } from "@/lib/env";
 
 /**
  * Reached only when someone authenticated against the Kognoz directory but
@@ -8,7 +9,7 @@ import { parseAllowedDomains } from "@/domain/access";
  * simply in the wrong account, which is the common case.
  */
 export default function NoAccessPage() {
-  const domains = parseAllowedDomains(process.env.ALLOWED_EMAIL_DOMAINS);
+  const domains = parseAllowedDomains(readEnv("ALLOWED_EMAIL_DOMAINS"));
   const list = domains.length ? domains.map((d) => `@${d}`).join(" or ") : "an approved";
 
   return (
