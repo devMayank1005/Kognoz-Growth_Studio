@@ -30,7 +30,7 @@ function apply(theme: Theme) {
   }
 }
 
-export function ThemeToggle() {
+export function ThemeToggle({ variant = "row" }: { variant?: "row" | "stack" }) {
   // Read lazily during the first client render rather than in an effect, so
   // there is no flash and no cascading re-render.
   const [theme, setTheme] = useState<Theme>(() => {
@@ -45,8 +45,12 @@ export function ThemeToggle() {
     { value: "system", label: "Match system" },
   ];
 
+  // Three buttons side by side do not fit the 256px account menu, so there they
+  // stack full-width instead. Same control, same behaviour.
+  const stacked = variant === "stack";
+
   return (
-    <div className="flex gap-1.5">
+    <div className={stacked ? "flex flex-col gap-1" : "flex gap-1.5"}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -56,9 +60,9 @@ export function ThemeToggle() {
             setTheme(o.value);
             apply(o.value);
           }}
-          className={`rounded border px-2.5 py-1 text-[13px] transition-colors duration-150 ${
-            theme === o.value ? "border-cyan text-body" : "border-line text-muted hover:text-body"
-          }`}
+          className={`rounded border text-[13px] transition-colors duration-150 ${
+            stacked ? "w-full px-2 py-1 text-left" : "px-2.5 py-1"
+          } ${theme === o.value ? "border-cyan text-body" : "border-line text-muted hover:text-body"}`}
         >
           {o.label}
         </button>

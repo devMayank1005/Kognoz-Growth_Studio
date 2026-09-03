@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
 
+import { ThemeToggle } from "./theme-toggle";
+
 export interface StudioUser {
   name: string;
   email: string;
@@ -66,6 +68,12 @@ export function UserMenu({ user }: { user: StudioUser }) {
           <p className="truncate text-[13px] font-medium text-body">{user.name}</p>
           <p className="truncate text-[11px] text-faint">{user.email}</p>
           <p className="mt-2 truncate text-[11px] text-muted">{user.orgName}</p>
+
+          <div className="mt-3 border-t border-line pt-3">
+            <p className="mb-1.5 text-[11px] text-faint">Appearance</p>
+            <ThemeToggle variant="stack" />
+          </div>
+
           <div className="mt-3 border-t border-line pt-3">
             <SignOutButton className="w-full" />
           </div>
