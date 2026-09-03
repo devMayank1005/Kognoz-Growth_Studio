@@ -286,6 +286,28 @@ export const partnerTowers = pgTable(
   (t) => [uniqueIndex("partner_towers_org_tower_idx").on(t.orgId, t.tower)],
 );
 
+/**
+ * Authentication failures (PRD §10 — observability).
+ *
+ * The browser only ever shows a bare status code on a failed sign-in, and the
+ * server log is not always reachable. Recording the actual reason here means an
+ * auth failure is diagnosable after the fact instead of being reproduced blind.
+ *
+ * Deliberately holds NO personal data: path, code, message and time only. Never
+ * a token, never an email address. §8 applies to diagnostics too.
+ */
+export const authErrors = pgTable(
+  "auth_errors",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    at: timestamp("at", { withTimezone: true }).defaultNow().notNull(),
+    path: text("path"),
+    code: text("code"),
+    message: text("message"),
+  },
+  (t) => [index("auth_errors_at_idx").on(t.at)],
+);
+
 /** Model-call ledger backing the per-org daily budget guard (PRD §4.1). */
 export const modelCalls = pgTable(
   "model_calls",

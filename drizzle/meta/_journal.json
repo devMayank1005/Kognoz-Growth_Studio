@@ -22,6 +22,13 @@
       "when": 1788370102238,
       "tag": "0002_abandoned_purifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788421654237,
+      "tag": "0003_outstanding_marauders",
+      "breakpoints": true
     }
   ]
 }

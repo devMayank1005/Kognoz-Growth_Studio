@@ -4,6 +4,7 @@ import { organization } from "better-auth/plugins";
 
 import { db } from "@/db/client";
 import * as schema from "@/db/schema";
+import { authErrors } from "@/db/schema";
 import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
 
 /**
@@ -66,6 +67,36 @@ export const auth = betterAuth({
         error: "domain_not_allowed",
         errorDescription: `Growth Studio is limited to ${allowedDomains.join(", ")} accounts.`,
       };
+    },
+  },
+
+  onAPIError: {
+    /**
+     * Record why a sign-in failed. Without this the browser shows only
+     * "internal_server_error" and the cause is invisible unless someone is
+     * watching the server log at the moment it happens.
+     */
+    onError: async (error, ctx) => {
+      const e = error as {
+        message?: string;
+        body?: { code?: string; message?: string };
+        status?: number;
+        // Not on AuthContext's type, but present at runtime on the thrown error.
+        path?: string;
+      };
+      const path = e?.path ?? (ctx as unknown as { path?: string })?.path ?? null;
+      try {
+        await db.insert(authErrors).values({
+          path,
+          code: e?.body?.code ?? (e?.status ? String(e.status) : null),
+          // Bounded: an error message is diagnostic, not a place to accumulate
+          // arbitrary provider output.
+          message: (e?.body?.message ?? e?.message ?? String(error)).slice(0, 800),
+        });
+      } catch {
+        // Diagnostics must never take down the request they are describing.
+      }
+      console.error("[auth]", path, e?.body?.code ?? e?.status, e?.body?.message ?? e?.message);
     },
   },
 
