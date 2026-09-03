@@ -1,9 +1,8 @@
 "use client";
 
 import {
-  DndContext, KeyboardSensor, PointerSensor, closestCorners,
-  useDraggable, useDroppable, useSensor, useSensors,
-  type DragEndEvent, type KeyboardCoordinateGetter,
+  DndContext, PointerSensor, closestCorners,
+  useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent,
 } from "@dnd-kit/core";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -18,59 +17,20 @@ import { cn } from "@/lib/cn";
 /**
  * The Kanban board (PRD §5, "new in v1").
  *
- * dnd-kit rather than a lighter drag library for one reason: KeyboardSensor.
- * §9.8 commits to full keyboard coverage, and a board you can only operate with
- * a mouse silently excludes anyone who cannot use one. Space picks a card up,
- * arrow keys move between columns, space drops, escape cancels.
+ * §9.8 commits to full keyboard coverage. I first tried dnd-kit's KeyboardSensor
+ * — pick up with space, arrow to move, space to drop — and it fought back:
+ * simulated dragging is a mouse metaphor wearing a keyboard costume, and it took
+ * three failed attempts against dnd-kit's translation-space coordinate API
+ * before I stopped and questioned the approach.
  *
- * A drop calls the same `moveToStage` server action the inspector's outcome
- * grid path uses, so "what a stage change means" has one definition.
- */
-
-/**
- * Move one COLUMN per arrow press, not 25 pixels.
+ * So: MOUSE users drag (which works), and everyone gets an explicit "move to
+ * stage" select on every card. That is not a fallback — it is how accessible
+ * boards actually work, it is faster than dragging even with a mouse, and it
+ * works on touch where dragging is fiddly.
  *
- * dnd-kit's default keyboard coordinate getter translates by a fixed small
- * delta, which is right for a sortable list and useless for a board: a column
- * is ~240px wide, so a single arrow press never crosses one and the board is
- * focusable but not actually operable by keyboard. That would make the §9.8
- * keyboard-coverage promise hollow, so this snaps to the adjacent column.
+ * Both paths call the same `moveToStage` server action the inspector's outcome
+ * grid uses, so "what a stage change means" has one definition.
  */
-const columnCoordinateGetter: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
-  const { droppableContainers, droppableRects, collisionRect } = context;
-  if (!collisionRect) return;
-
-  const direction = event.code === "ArrowRight" ? 1 : event.code === "ArrowLeft" ? -1 : 0;
-  if (direction === 0) return;
-
-  const columns = Array.from(droppableContainers.values())
-    .map((c) => ({ id: String(c.id), rect: droppableRects.get(c.id) }))
-    .flatMap((c) => (c.rect ? [{ id: c.id, rect: c.rect }] : []))
-    .sort((a, b) => a.rect.left - b.rect.left);
-  if (columns.length === 0) return;
-
-  const centreOf = (r: { left: number; width: number }) => r.left + r.width / 2;
-  const dragCentre = collisionRect.left + collisionRect.width / 2;
-
-  let current = 0;
-  let best = Number.POSITIVE_INFINITY;
-  columns.forEach((c, i) => {
-    const d = Math.abs(centreOf(c.rect) - dragCentre);
-    if (d < best) { best = d; current = i; }
-  });
-
-  const target = columns[current + direction];
-  if (!target) return;
-
-  // Return a DELTA applied to the current coordinates, not an absolute
-  // position. dnd-kit works in translation space; returning absolute page
-  // coordinates leaves the card over its original column, which is exactly
-  // what the live region reported while debugging this.
-  return {
-    x: currentCoordinates.x + (centreOf(target.rect) - centreOf(columns[current].rect)),
-    y: currentCoordinates.y,
-  };
-};
 
 /** The working flow. Won and Lost are outcomes, not columns to drag through. */
 const COLUMNS = [
@@ -90,19 +50,12 @@ export function Kanban({ cards }: { cards: PipelineCardRow[] }) {
   const router = useRouter();
   const [moving, setMoving] = useState<string | null>(null);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    // The reason for this library. Without it the board is mouse-only — and
-    // without the coordinate getter above, keyboard "support" would move a card
-    // 25px and never reach the next column.
-    useSensor(KeyboardSensor, { coordinateGetter: columnCoordinateGetter }),
-  );
+  // Pointer only. Keyboard users get the explicit stage selector on each card
+  // instead — see the note on StageSelect below.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
-  async function onDragEnd(event: DragEndEvent) {
-    const id = String(event.active.id);
-    const stage = event.over?.id ? String(event.over.id) : null;
-    if (!stage) return;
-
+  /** One path for both drag and select, so they cannot diverge. */
+  async function move(id: string, stage: string) {
     const card = cards.find((c) => c.id === id);
     if (!card || card.stage === stage) return;
 
@@ -115,6 +68,11 @@ export function Kanban({ cards }: { cards: PipelineCardRow[] }) {
     router.refresh();
   }
 
+  function onDragEnd(event: DragEndEvent) {
+    if (!event.over) return;
+    void move(String(event.active.id), String(event.over.id));
+  }
+
   return (
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={onDragEnd}>
       <div className="flex gap-3 overflow-x-auto pb-2">
@@ -124,7 +82,7 @@ export function Kanban({ cards }: { cards: PipelineCardRow[] }) {
           return (
             <Column key={stage} stage={stage} count={inColumn.length} value={value}>
               {inColumn.map((card) => (
-                <Card key={card.id} card={card} busy={moving === card.id} />
+                <Card key={card.id} card={card} busy={moving === card.id} onMove={move} />
               ))}
             </Column>
           );
@@ -158,7 +116,7 @@ function Column({
   );
 }
 
-function Card({ card, busy }: { card: PipelineCardRow; busy: boolean }) {
+function Card({ card, busy, onMove }: { card: PipelineCardRow; busy: boolean; onMove: (id: string, stage: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: card.id });
   const select = useSelection((s) => s.select);
 
@@ -185,6 +143,25 @@ function Card({ card, busy }: { card: PipelineCardRow; busy: boolean }) {
       {card.touches > 0 && (
         <p className="num mt-0.5 text-[11px] text-faint">{card.touches} of 3 touches</p>
       )}
+
+      {/* The accessible path, and honestly the faster one. A native select
+          announces correctly, works by keyboard, and works on touch. */}
+      <label className="mt-1.5 block">
+        <span className="sr-only">Move {card.account} to stage</span>
+        <select
+          value={card.stage}
+          disabled={busy}
+          // Stop the click reaching the card, which would open the inspector.
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          onChange={(e) => onMove(card.id, e.target.value)}
+          className="w-full rounded border border-line bg-canvas px-1 py-0.5 text-[11px] text-muted"
+        >
+          {COLUMNS.map((s) => (
+            <option key={s} value={s}>{STAGE_WORD[s] ?? s}</option>
+          ))}
+        </select>
+      </label>
     </article>
   );
 }

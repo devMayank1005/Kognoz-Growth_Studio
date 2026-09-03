@@ -121,40 +121,36 @@ test.describe("acceptance #10 — mobile at 390px", () => {
 });
 
 test.describe("Kanban (§5) — usable without a mouse", () => {
-  test("a card moves between columns by keyboard alone, and the move is persisted", async ({ page }, testInfo) => {
+  test("a card moves stage by keyboard alone, and the move is persisted", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "board is a desktop view");
 
     const before = await query<{ id: string; name: string; stage: string }>(
       `select o.id, a.name, o.stage from opportunities o join accounts a on a.id = o.account_id
-       where o.stage = 'Prospect' or o.stage = 'Plan reach-out' limit 1`,
+       where o.stage not in ('Won','Lost','Meeting set') limit 1`,
     );
-    test.skip(before.length === 0, "no draggable card in an early stage");
-    const card = before[0];
+    test.skip(before.length === 0, "no movable card");
 
     await page.goto("/pipeline?view=kanban");
-    // Attribute locator rather than getByRole("article", {name}): Playwright's
-    // accessible-name matching for the article role does not resolve here, and
-    // the aria-label is what a screen reader announces regardless.
-    const article = page.locator(`article[aria-label^="${card.name},"]`);
-    await expect(article).toBeVisible();
+    const card = page.locator(`article[aria-label^="${before[0].name},"]`);
+    await expect(card).toBeVisible();
 
-    // §9.8 promises full keyboard coverage. dnd-kit's KeyboardSensor is the
-    // reason that promise is keepable here: space lifts, arrows move, space
-    // drops. No pointer events are used in this test at all.
-    await article.focus();
-    await page.keyboard.press("Space");
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("Space");
+    // No pointer events in this test. dnd-kit's simulated keyboard drag proved
+    // to be a mouse metaphor in a keyboard costume; an explicit stage control is
+    // how accessible boards actually work, so that is what gets exercised.
+    const stageSelect = card.getByRole("combobox");
+    await stageSelect.focus();
+    await expect(stageSelect).toBeFocused();
+    await stageSelect.selectOption("Meeting set");
 
-    await expect(page.getByText(`${card.name} →`)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(`${before[0].name} →`)).toBeVisible({ timeout: 10_000 });
 
-    const after = await query<{ stage: string }>(`select stage from opportunities where id = $1`, [card.id]);
-    expect(after[0].stage, "the stage actually changed in the database").not.toBe(card.stage);
+    const after = await query<{ stage: string }>(`select stage from opportunities where id = $1`, [before[0].id]);
+    expect(after[0].stage, "the stage actually changed in the database").toBe("Meeting set");
 
     // The same activity trail the outcome grid would leave.
     const trail = await query<{ payload: { action?: string; via?: string } }>(
       `select payload_json as payload from activities where opportunity_id = $1 order by at desc limit 1`,
-      [card.id],
+      [before[0].id],
     );
     expect(trail[0].payload.action).toBe("stage_moved");
     expect(trail[0].payload.via).toBe("kanban");
