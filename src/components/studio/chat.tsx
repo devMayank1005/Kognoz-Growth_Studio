@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -33,8 +34,11 @@ const SUGGESTIONS = [
 ];
 
 export function Chat() {
+  const params = useSearchParams();
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [input, setInput] = useState("");
+  // ⌘K hands a typed question through as ?q= so the operator does not have to
+  // navigate here and retype it (§9.9).
+  const [input, setInput] = useState(() => params.get("q") ?? "");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);

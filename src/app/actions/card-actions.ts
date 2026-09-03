@@ -3,7 +3,7 @@
 import { and, desc, eq } from "drizzle-orm";
 
 import { db, withOrg } from "@/db/client";
-import { accounts, activities, dnc, drafts, opportunities, people, settings, user } from "@/db/schema";
+import { accounts, activities, dnc, drafts, opportunities, people, settings, stages, user } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
 import { applyOutcome, type Outcome } from "@/domain/outcomes";
 import { buildPacket } from "@/domain/packet";
@@ -289,6 +289,49 @@ export async function recordOutcome(
       ...(effect.dueOn !== undefined ? { due: effect.dueOn } : {}),
     },
   };
+}
+
+/**
+ * Move a card to a stage directly — the Kanban drop.
+ *
+ * Deliberately shares this file with recordOutcome rather than living in its
+ * own action: a stage change means the same thing whether it came from the
+ * outcome grid or a drag, and two implementations would drift.
+ */
+export async function moveToStage(
+  opportunityId: string,
+  stage: (typeof stages)[number],
+): Promise<{ ok: true; stage: string } | { ok: false; message: string }> {
+  const session = await requireSession();
+  if (!stages.includes(stage)) return { ok: false, message: "Unknown stage." };
+
+  const card = await loadCard(session.orgId, opportunityId);
+  if (!card) return { ok: false, message: "Card not found." };
+  if (card.stage === stage) return { ok: true, stage };
+
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(opportunities)
+      .set({
+        stage,
+        // A card that reaches a talking stage is no longer waiting on a
+        // partner, so it should stop showing in "with partners over 3 days".
+        ...(["In conversation", "Meeting set", "Proposal"].includes(stage) ? { dispatchedAt: null } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(opportunities.id, opportunityId));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      opportunityId,
+      accountId: card.accountId,
+      type: stage === "Won" ? "won" : stage === "Lost" ? "lost" : "note",
+      payloadJson: { action: "stage_moved", from: card.stage, to: stage, via: "kanban" },
+      actorId: session.userId,
+    });
+  });
+
+  return { ok: true, stage };
 }
 
 /** Timeline for the inspector (§5): every add, draft, send, packet, outcome. */

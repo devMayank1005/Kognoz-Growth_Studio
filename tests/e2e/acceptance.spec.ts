@@ -119,3 +119,51 @@ test.describe("acceptance #10 — mobile at 390px", () => {
     expect(overflow.pageScrolls, "the page itself must not scroll sideways").toBe(false);
   });
 });
+
+test.describe("Kanban (§5) — usable without a mouse", () => {
+  test("a card moves between columns by keyboard alone, and the move is persisted", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "board is a desktop view");
+
+    const before = await query<{ id: string; name: string; stage: string }>(
+      `select o.id, a.name, o.stage from opportunities o join accounts a on a.id = o.account_id
+       where o.stage = 'Prospect' or o.stage = 'Plan reach-out' limit 1`,
+    );
+    test.skip(before.length === 0, "no draggable card in an early stage");
+    const card = before[0];
+
+    await page.goto("/pipeline?view=kanban");
+    // Attribute locator rather than getByRole("article", {name}): Playwright's
+    // accessible-name matching for the article role does not resolve here, and
+    // the aria-label is what a screen reader announces regardless.
+    const article = page.locator(`article[aria-label^="${card.name},"]`);
+    await expect(article).toBeVisible();
+
+    // §9.8 promises full keyboard coverage. dnd-kit's KeyboardSensor is the
+    // reason that promise is keepable here: space lifts, arrows move, space
+    // drops. No pointer events are used in this test at all.
+    await article.focus();
+    await page.keyboard.press("Space");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Space");
+
+    await expect(page.getByText(`${card.name} →`)).toBeVisible({ timeout: 10_000 });
+
+    const after = await query<{ stage: string }>(`select stage from opportunities where id = $1`, [card.id]);
+    expect(after[0].stage, "the stage actually changed in the database").not.toBe(card.stage);
+
+    // The same activity trail the outcome grid would leave.
+    const trail = await query<{ payload: { action?: string; via?: string } }>(
+      `select payload_json as payload from activities where opportunity_id = $1 order by at desc limit 1`,
+      [card.id],
+    );
+    expect(trail[0].payload.action).toBe("stage_moved");
+    expect(trail[0].payload.via).toBe("kanban");
+  });
+
+  test("switching view keeps the active filter", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "board is a desktop view");
+    await page.goto("/pipeline?tower=T3&view=kanban");
+    // Losing the filter silently would show a different set under the same chip.
+    await expect(page.getByText("Tower:")).toBeVisible();
+  });
+});
