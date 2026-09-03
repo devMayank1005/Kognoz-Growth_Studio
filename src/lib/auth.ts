@@ -6,7 +6,7 @@ import { db } from "@/db/client";
 import * as schema from "@/db/schema";
 import { authErrors } from "@/db/schema";
 import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
-import { readEnv, requireEnv } from "@/lib/env";
+import { readEnv, readSecret, requireEnv } from "@/lib/env";
 
 /**
  * Better Auth owns identity and membership: users, sessions, organizations and
@@ -59,7 +59,10 @@ if (!TENANT_GUID.test(tenantId) && !TENANT_ALIASES.has(tenantId.toLowerCase())) 
 
 const SSO_HINT = "Microsoft SSO is the only sign-in path.";
 const clientId = requireEnv("MICROSOFT_CLIENT_ID", SSO_HINT);
-const clientSecret = requireEnv("MICROSOFT_CLIENT_SECRET", SSO_HINT);
+// readSecret, not requireEnv: the secret goes into the token request, and a
+// multi-line paste would fail as AADSTS7000215 with nothing pointing at why.
+const clientSecret = readSecret("MICROSOFT_CLIENT_SECRET");
+if (!clientSecret) throw new Error(`MICROSOFT_CLIENT_SECRET is not set. ${SSO_HINT}`);
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),

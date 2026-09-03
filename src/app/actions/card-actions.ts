@@ -11,7 +11,7 @@ import { practiceById } from "@/domain/practices";
 import { afterSend, stageKind, type DraftKind } from "@/domain/touches";
 import { writeDraft } from "@/engine/draft";
 import { logModelCall } from "@/engine/budget";
-import { PROSE_MODEL } from "@/engine/client";
+import { PROSE_MODEL, engineConfigError } from "@/engine/client";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -82,6 +82,12 @@ export async function generateDraft(opportunityId: string, kind?: DraftKind): Pr
   const practice = practiceById(card.practiceId);
   const chosen = kind ?? stageKind(card.stage);
 
+  // A misconfigured key cannot be retried into working. Say so before spending
+  // a round trip and before offering the operator a button that cannot succeed.
+  if (engineConfigError) {
+    return { ok: false, message: `The engine is not configured on the server: ${engineConfigError}` };
+  }
+
   const started = Date.now();
   let result;
   try {
@@ -104,7 +110,18 @@ export async function generateDraft(opportunityId: string, kind?: DraftKind): Pr
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     await logModelCall({ orgId: session.orgId, kind: "draft", model: PROSE_MODEL, error: detail });
-    return { ok: false, message: "The draft could not be written. Try again." };
+
+    // Twelve identical failures were once reported as "try again" because a
+    // pasted API key carried a comment line into an HTTP header. Configuration
+    // is not bad luck: name it, and do not invite a retry that cannot work.
+    const misconfigured =
+      /invalid header value|authentication_error|invalid x-api-key|permission_error|401|403/i.test(detail);
+    return {
+      ok: false,
+      message: misconfigured
+        ? "The engine rejected the server's credentials. This needs an admin — retrying will not help."
+        : "The draft could not be written. Try again.",
+    };
   }
 
   await logModelCall({

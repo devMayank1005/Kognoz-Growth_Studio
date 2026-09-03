@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { readEnv, requireEnv, sanitizeEnvValue } from "./env";
+import { readEnv, readSecret, requireEnv, sanitizeEnvValue } from "./env";
 
 /**
  * A fresh variable name per test: `readEnv` warns only once per variable by
@@ -125,6 +125,66 @@ describe("requireEnv", () => {
   it("includes the caller's hint in the error", () => {
     const k = key();
     expect(() => requireEnv(k, "Copy .env.example.")).toThrow("Copy .env.example.");
+  });
+});
+
+describe("readSecret", () => {
+  it("returns a clean key untouched", () => {
+    const k = key();
+    process.env[k] = "sk-ant-api03-abc123";
+    expect(readSecret(k)).toBe("sk-ant-api03-abc123");
+  });
+
+  /**
+   * The production failure, verbatim. Pasting into Vercel selected past the end
+   * of the key and swallowed the next section header of the .env file, so the
+   * SDK threw `Headers.append: … is an invalid header value` on every call and
+   * the whole engine went down.
+   *
+   * A newline cannot appear in an HTTP header value, so nothing after one could
+   * ever have been part of a valid key — cutting there is the only correct
+   * reading, not a guess.
+   */
+  it("cuts a swallowed comment block off an API key", () => {
+    const k = key();
+    process.env[k] = "sk-ant-api03-abc123\n\n# ---- Better Auth ----";
+    expect(readSecret(k)).toBe("sk-ant-api03-abc123");
+  });
+
+  it("cuts at a carriage return too", () => {
+    const k = key();
+    process.env[k] = "secret\r\nBETTER_AUTH_URL=http://localhost:3001";
+    expect(readSecret(k)).toBe("secret");
+  });
+
+  it("still trims what readEnv would trim", () => {
+    const k = key();
+    process.env[k] = "  secret%0A  ";
+    expect(readSecret(k)).toBe("secret");
+  });
+
+  it("warns, naming the variable, when it had to cut", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const k = key();
+    process.env[k] = "sk-ant-abc\n# ---- Better Auth ----";
+    readSecret(k);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain(k);
+  });
+
+  it("does not warn for a clean value", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const k = key();
+    process.env[k] = "sk-ant-abc";
+    readSecret(k);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("treats an unset or empty value as absent", () => {
+    expect(readSecret(key())).toBeUndefined();
+    const k = key();
+    process.env[k] = "\n\n";
+    expect(readSecret(k)).toBeUndefined();
   });
 });
 

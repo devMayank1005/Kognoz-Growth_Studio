@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
-import { readEnv } from "@/lib/env";
+import { readEnv, readSecret } from "@/lib/env";
 
 import { ENGINE_SYS, EXTRACT_SYS } from "../../prompts/engine";
 import { engineExtractionSchema, scrubRow, type EngineExtraction } from "./schemas";
@@ -29,11 +29,30 @@ export const WEB_SEARCH_TOOL = "web_search_20260209" as const;
 const FAST_MODE_ENABLED = readEnv("ENABLE_FAST_MODE") === "1";
 
 /**
- * The SDK reads ANTHROPIC_API_KEY implicitly, so a trailing newline would reach
- * an HTTP header and throw. Pass it sanitized; `undefined` leaves the SDK's own
- * env lookup (and its "missing key" error) exactly as it was.
+ * The SDK reads ANTHROPIC_API_KEY implicitly and puts it straight into an HTTP
+ * header, so anything but a single clean line throws before the request leaves
+ * the server. `readSecret` takes the first line only — a paste once carried the
+ * key plus a blank line plus the next `# ---- … ----` header out of .env, and
+ * every model call in production failed for hours behind the message "the draft
+ * could not be written, try again".
  */
-export const client = new Anthropic({ apiKey: readEnv("ANTHROPIC_API_KEY") });
+const apiKey = readSecret("ANTHROPIC_API_KEY");
+
+/**
+ * Set when the key is missing or malformed, so call sites can tell the operator
+ * that no amount of retrying will help. Deliberately not a throw: a bad key
+ * should not take down the pages that never call the engine.
+ */
+export const engineConfigError: string | null =
+  apiKey === undefined
+    ? "ANTHROPIC_API_KEY is not set on the server."
+    : !apiKey.startsWith("sk-ant-")
+      ? "ANTHROPIC_API_KEY does not look like an Anthropic key (it should start with sk-ant-)."
+      : null;
+
+if (engineConfigError) console.error(`[engine] ${engineConfigError}`);
+
+export const client = new Anthropic({ apiKey });
 
 export interface UsageReport {
   inputTokens: number;

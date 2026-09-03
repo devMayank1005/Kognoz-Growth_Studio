@@ -58,6 +58,21 @@ the authorize leg builds a `URL`, and the WHATWG parser strips control character
 worked perfectly. `readEnv` strips whitespace and its percent-encoded forms (`%0A`, `%0D`, `%09`) at
 the ends only, and warns once per variable so the value still gets fixed at source.
 
+**Credentials use `readSecret`, which keeps only the first line.** A paste into Vercel once carried
+`ANTHROPIC_API_KEY` *plus a blank line plus the `# ---- Better Auth ----` header* out of `.env`, so
+the SDK threw `Headers.append: … is an invalid header value` and every model call failed for hours —
+surfacing only as "the draft could not be written, try again". `readEnv` cannot catch that: the junk
+was a comment, not whitespace. Cutting at the newline is not a guess — a value used as an HTTP header
+cannot legally contain one.
+
+Applied to `ANTHROPIC_API_KEY`, `MICROSOFT_CLIENT_SECRET`, and both Inngest keys.
+**`BETTER_AUTH_SECRET` is deliberately left raw**: it is an HMAC key that never crosses a header
+boundary, so junk in it is harmless as long as it stays consistent — sanitizing it would change the
+signing key and sign every user out.
+
+`src/engine/client.ts` exports `engineConfigError`, checked by the chat route and `generateDraft` so
+a misconfigured key is reported as configuration rather than inviting a retry that cannot work.
+
 ## Deployment
 
 Production: **https://kognoz-growthstudio.vercel.app** (Vercel). Runbook: `docs/DEPLOY.md`.

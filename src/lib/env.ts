@@ -28,6 +28,12 @@ export function sanitizeEnvValue(raw: string): string {
 /** Warn once per variable — this runs per request, and repetition is noise. */
 const warned = new Set<string>();
 
+function warnOnce(name: string, what: string) {
+  if (warned.has(name)) return;
+  warned.add(name);
+  console.warn(`[env] ${name} ${what} Fix the value at source.`);
+}
+
 /**
  * Reads an environment variable, sanitized. Returns `undefined` when it is
  * unset or holds nothing but whitespace, so `??` and `||` defaults behave.
@@ -37,11 +43,36 @@ export function readEnv(name: string): string | undefined {
   if (raw === undefined) return undefined;
 
   const value = sanitizeEnvValue(raw);
-  if (value !== raw && !warned.has(name)) {
-    warned.add(name);
-    console.warn(
-      `[env] ${name} had leading or trailing whitespace, which has been ignored. ` +
-        `Fix the value at source — a stray newline breaks URLs and HTTP headers.`,
+  if (value !== raw) {
+    warnOnce(name, "had leading or trailing whitespace, which has been ignored.");
+  }
+  return value === "" ? undefined : value;
+}
+
+/**
+ * Reads a credential — an API key, a client secret, a signing key.
+ *
+ * Takes only the FIRST LINE. Pasting `ANTHROPIC_API_KEY` into Vercel once
+ * selected past the end of the key and swallowed the blank line and the
+ * `# ---- Better Auth ----` header that followed it in the .env file. The SDK
+ * then threw `Headers.append: … is an invalid header value` on every request
+ * and the entire engine went down, reported to the operator only as "the draft
+ * could not be written, try again".
+ *
+ * Cutting at the newline is not a guess: a value used as an HTTP header cannot
+ * legally contain one, so nothing after it could ever have been part of a valid
+ * credential. `readEnv` cannot catch this on its own — the junk that followed
+ * was a comment, not whitespace.
+ */
+export function readSecret(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+
+  const value = sanitizeEnvValue(raw.split(/[\r\n]/)[0] ?? "");
+  if (value !== raw) {
+    warnOnce(
+      name,
+      "contained more than a single line, or padding; only the first line is used.",
     );
   }
   return value === "" ? undefined : value;

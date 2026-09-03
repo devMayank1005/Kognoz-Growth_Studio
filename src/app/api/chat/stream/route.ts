@@ -7,7 +7,7 @@ import { PROGRAM_TARGET } from "@/domain/revenue";
 import { rankTargets } from "@/domain/scoring";
 import { curveTarget, monthOf } from "@/domain/revenue";
 import { checkBudget, logModelCall } from "@/engine/budget";
-import { EXTRACT_MODEL, PROSE_MODEL, extractRows, readUsage, streamProse, webSearchError } from "@/engine/client";
+import { EXTRACT_MODEL, PROSE_MODEL, engineConfigError, extractRows, readUsage, streamProse, webSearchError } from "@/engine/client";
 import { matchIntent } from "@/engine/local";
 import { buildLiveState } from "@/engine/state";
 import { appendTurns, type ThreadTurn } from "@/db/threads";
@@ -109,6 +109,18 @@ export async function POST(request: Request) {
           send("state", { source: "local", intent: intent.kind });
           send("rows", { chart: null, rows: [], action: intent });
           send("done", { source: "local" });
+          controller.close();
+          return;
+        }
+
+        // Local answers still work without a key, so this check sits after
+        // them: a misconfigured server should cost the operator as little as
+        // possible, not black out the whole chat.
+        if (engineConfigError) {
+          send("error", {
+            message: `The engine is not configured on the server: ${engineConfigError} Local questions — pipeline, what's due today, who to open first — still work.`,
+          });
+          send("done", { source: "error" });
           controller.close();
           return;
         }
