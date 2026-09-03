@@ -31,6 +31,17 @@ TanStack Query + Table · Zustand · Zod · Vitest · Playwright
 - Port 3000 is usually taken by the separate Kognoz Social Studio app on this
   machine, so `pnpm dev` typically lands on 3001. Check the startup log.
 
+## Deployment
+
+Production: **https://kognoz-growthstudio.vercel.app** (Vercel). Runbook: `docs/DEPLOY.md`.
+
+- `BETTER_AUTH_URL` must be the production URL, and the Entra app must register the full callback
+  path `.../api/auth/callback/microsoft`, not the site root.
+- `ANTHROPIC_API_KEY` is read implicitly by the SDK, so it never shows up in a `process.env` search
+  — easy to omit from an env checklist.
+- Inngest needs the app **synced** (register `/api/inngest` in its dashboard), not just the keys.
+  Locally it needs no account: `npx inngest-cli dev`.
+
 ## Database
 
 Neon, **claimed and owned** (project `wispy-tree-92088623`, region `us-east-2`). Runbook and the
