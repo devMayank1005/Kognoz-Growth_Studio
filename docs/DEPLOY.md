@@ -43,11 +43,42 @@ Keys alone do not schedule anything. Inngest has to be told where the functions 
 1. Create an account and app at inngest.com.
 2. Copy the **Event Key** and **Signing Key** into Vercel (Production scope).
 3. **Redeploy** — Vercel does not apply new environment variables to an existing deployment.
-4. In the Inngest dashboard, register the app URL:
-   **`https://kognoz-growthstudio.vercel.app/api/inngest`**
+4. Sync the app. Either register the URL in the Inngest dashboard, or — faster, and scriptable —
+   have the app register itself:
+
+   ```bash
+   curl -X PUT https://kognoz-growthstudio.vercel.app/api/inngest
+   ```
+
+   `{"message":"Successfully registered","modified":true}` means Inngest accepted it. Because the
+   app authenticates that call with its own signing key, a success here also **proves the signing
+   key in Vercel is correct** — a wrong key is rejected.
 
 Success looks like one function, `daily-sweep`, listed with the cron
 `TZ=Asia/Kolkata 30 5 * * *`. Nothing listed means the sync never reached the endpoint.
+
+### Proving it from outside, without the dashboard
+
+`/api/inngest` answers an unsigned `GET` with `401`, which proves only that a signing key is set. To
+prove the key is the *right* one, sign the request the way Inngest does — reuse the SDK's own helper
+rather than reimplementing HMAC:
+
+```js
+import { signDataWithKey } from "inngest/helpers/net";
+const ts  = Math.round(Date.now() / 1000).toString();
+const sig = await signDataWithKey("", process.env.INNGEST_SIGNING_KEY, ts, console);
+await fetch(url, { headers: { "x-inngest-signature": `t=${ts}&s=${sig}` } });
+```
+
+A healthy production app answers `200` with:
+
+```
+app_id: "growth-studio"   function_count: 1        mode: "cloud"
+has_event_key: true       has_signing_key: true    authentication_succeeded: true
+```
+
+`authentication_succeeded: true` is the line that matters — it means the key you signed with is the
+key the deployment holds.
 
 **Locally, Inngest needs no account at all** — `npx inngest-cli dev` discovers
 `localhost:3001/api/inngest` by itself. The keys are for deployed environments only.

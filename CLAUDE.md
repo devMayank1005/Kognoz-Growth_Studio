@@ -81,8 +81,12 @@ Production: **https://kognoz-growthstudio.vercel.app** (Vercel). Runbook: `docs/
   path `.../api/auth/callback/microsoft`, not the site root.
 - `ANTHROPIC_API_KEY` is read implicitly by the SDK, so it never shows up in a `process.env` search
   — easy to omit from an env checklist.
-- Inngest needs the app **synced** (register `/api/inngest` in its dashboard), not just the keys.
-  Locally it needs no account: `npx inngest-cli dev`.
+- Inngest needs the app **synced**, not just the keys. Fastest way, no dashboard:
+  `curl -X PUT https://kognoz-growthstudio.vercel.app/api/inngest` — the app registers itself, and
+  because it authenticates with its own signing key, success also proves that key is correct.
+  To verify from outside, sign a GET with `signDataWithKey` from `inngest/helpers/net` and look for
+  `authentication_succeeded: true` (see `docs/DEPLOY.md`). Locally it needs no account at all:
+  `npx inngest-cli dev`.
 
 ## Database
 
