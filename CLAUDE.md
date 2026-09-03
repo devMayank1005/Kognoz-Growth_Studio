@@ -33,13 +33,16 @@ TanStack Query + Table · Zustand · Zod · Vitest · Playwright
 
 ## Database
 
-The Neon project is **claimable and EXPIRES 2026-09-05 11:30 UTC** unless claimed. Runbook:
-`docs/CLAIM-NEON.md`. Take a verified backup first with `pnpm db:backup --verify` — dumps land in
-`backups/` and are gitignored because they contain real email addresses (§8).
+Neon, **claimed and owned** (project `wispy-tree-92088623`, region `us-east-2`). Runbook and the
+region-move plan: `docs/CLAIM-NEON.md`.
 
-Migrations and `pg_dump` use `DATABASE_URL_UNPOOLED` (the direct endpoint). The app uses the pooled
-`DATABASE_URL`. Neon's pooler does not carry the session state either of those needs.
-- Full breaking-change list: `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`.
+- The app uses the **pooled** `DATABASE_URL`. Migrations and `pg_dump` use the **direct**
+  `DATABASE_URL_UNPOOLED` — Neon's pooler does not carry the session state they need.
+- **After any credential rotation, `neon env pull` updates `DATABASE_URL` but NOT
+  `DATABASE_URL_UNPOOLED`.** That one is ours; derive it by removing `-pooler` from the new host.
+  This has already caused one round of `password authentication failed`.
+- `pnpm db:backup --verify` dumps and then proves it by restoring into a local scratch database.
+  Dumps land in `backups/`, gitignored because they contain real email addresses (§8).
 
 ## Anthropic API rules (do not regress these)
 

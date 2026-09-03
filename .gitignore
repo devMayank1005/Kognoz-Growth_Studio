@@ -56,3 +56,7 @@ drizzle/meta/_journal.json.bak
 # The README in this directory IS tracked; the dumps are not.
 backups/*.dump
 backups/*.sql
+
+# playwright
+/test-results/
+/playwright-report/

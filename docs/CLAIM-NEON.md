@@ -1,67 +1,55 @@
-# Claiming the Neon database
+# The Neon database
 
-The database was provisioned as a **claimable** Neon project — created without an account so the
-build could start immediately. Claiming transfers it into a Neon account you own.
+**Status: claimed and owned.** Claimed 2026-09-03; `neon claim status` reports `reconciled`. The
+original expiry no longer applies.
 
 | | |
 |---|---|
 | Project | `wispy-tree-92088623` |
 | Branch | `br-square-violet-axo3jxa9` |
 | Region | `us-east-2` |
-| **Expires** | **2026-09-05 11:30 UTC** unless claimed |
+| Endpoint | `ep-gentle-glade-axg6kozp` |
 
-**There is no rush, because there is a verified backup.** Run `pnpm db:backup --verify` before you
-start, and the worst case is a restore rather than a loss.
+This was originally a *claimable* project — provisioned without an account so the build could start
+immediately — and has since been transferred into a real Neon account.
 
-## The sequence
+## The trap that bit during the claim
 
-```bash
-# 1. Confirm it is still unclaimed and how long is left
-npx neon@latest claim status
+Claiming rotates the database password. `npx neon@latest env pull` updates **`DATABASE_URL`** and
+nothing else, so **`DATABASE_URL_UNPOOLED` kept the old, revoked password** and every migration and
+`pg_dump` failed with `password authentication failed`.
 
-# 2. Mint a claim code and open the browser. THE CODE EXPIRES IN 15 MINUTES,
-#    so run this only when you are ready to sign in.
-npx neon@latest claim accept
+That second variable is ours, not Neon's, which is why their tooling does not touch it. After any
+future credential rotation, derive it from the freshly pulled pooled URL by removing `-pooler` from
+the host:
+
+```
+DATABASE_URL           ep-gentle-glade-axg6kozp-pooler.c-4.us-east-2.aws.neon.tech   (app)
+DATABASE_URL_UNPOOLED  ep-gentle-glade-axg6kozp.c-4.us-east-2.aws.neon.tech          (migrations, pg_dump)
 ```
 
-Sign in to Neon in the browser that opens. You can create an account during the flow (Google or
-GitHub). Continuing on that page starts the transfer.
+Neon's pooler does not carry the session state that migrations and dumps need, which is the whole
+reason the split exists.
+
+After rotating, restart the dev server and re-run `pnpm db:check-auth` and
+`pnpm db:check-compliance`.
+
+## Backups
+
+`pnpm db:backup --verify` dumps and then proves the dump by restoring it into a local scratch
+database and comparing every table. See `backups/README.md`. Run it before anything risky — a
+migration you are unsure about, or a region move.
+
+## Still worth doing: move region before production
+
+The project sits in `us-east-2`. Warm queries measured **1.4–1.9s from India**, and PRD §8's
+DPDP/PDPL posture points at an Asian region.
+
+This is now an unhurried job, because a verified backup exists: create a project in `ap-south-1`
+(Mumbai) or `ap-southeast-1` (Singapore), restore a dump into it, and repoint both URLs.
 
 ```bash
-# 3. Pull the ROTATED connection string — see the trap below
-npx neon@latest env pull
-
-# 4. Confirm the app still works against the new connection
-pnpm db:check-auth
-pnpm db:check-compliance
+pnpm db:backup --verify
+createdb-equivalent on the new project, then:
+pg_restore --no-owner --no-privileges -d "<new DIRECT connection string>" backups/growth-studio-<timestamp>.dump
 ```
-
-Then restart the dev server so it picks up the new `DATABASE_URL`.
-
-## Traps
-
-**`DATABASE_URL` rotates the moment you claim.** The pre-claim URL and its access tokens are
-revoked. Anything still holding the old one — a running dev server, a deploy — breaks until
-`env pull` and a restart. This is expected, not a fault.
-
-**The claim code expires in 15 minutes.** Minting a new one cancels the previous unused code, so
-only the latest works. You can mint as often as you like while the project itself has not expired.
-
-**`env pull` writes to `.env.local`.** It will not clobber unrelated keys, but check the file
-afterwards — `DATABASE_URL_UNPOOLED` (the direct endpoint used for migrations and `pg_dump`) may
-need updating by hand to match the new host with `-pooler` removed.
-
-**Claiming does not change the region.** The project stays in `us-east-2`. Moving it is a separate
-job: create a project in `ap-south-1` (Mumbai) or `ap-southeast-1` (Singapore) and restore a dump
-into it. Worth doing before production for latency from India and the DPDP/PDPL posture in PRD §8 —
-warm queries from India measured 1.4–1.9s against `us-east-2`.
-
-## If it expires anyway
-
-Nothing is lost provided a backup exists. Create a new Neon project and:
-
-```bash
-pg_restore --no-owner --no-privileges -d "<new direct connection string>" backups/growth-studio-<timestamp>.dump
-```
-
-Then update `DATABASE_URL` and `DATABASE_URL_UNPOOLED` in `.env.local`. See `backups/README.md`.

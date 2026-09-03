@@ -1,4 +1,5 @@
 import { InspectorPanel } from "@/components/studio/inspector-panel";
+import { InspectorSheet } from "@/components/studio/inspector-sheet";
 import { StatusLine, StudioShell, TopBar } from "@/components/studio/shell";
 import { curveTarget, monthOf } from "@/domain/revenue";
 import { db } from "@/db/client";
@@ -47,6 +48,8 @@ export default async function StudioLayout({ children }: LayoutProps<"/">) {
       }
     >
       {children}
+      {/* Same panel, delivered as a sheet below 1280px (§9.4). */}
+      <InspectorSheet />
     </StudioShell>
   );
 }

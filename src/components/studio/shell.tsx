@@ -16,7 +16,7 @@ import { cn } from "@/lib/cn";
 
 /* §2 — the rail. Order matters: it is the operator's daily loop, top to
    bottom, not an alphabetised menu. */
-const NAV = [
+export const NAV = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/today", label: "Today", icon: CalendarClock },
   { href: "/pipeline", label: "Pipeline", icon: Table2 },
@@ -52,6 +52,42 @@ export function Rail() {
           >
             <Icon aria-hidden className="size-4 shrink-0" strokeWidth={1.75} />
             <span>{label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * §9.4 — below 768px the rail is hidden, so these are the ONLY navigation.
+ * Without them the app is unreachable on a phone, which is what acceptance #10
+ * is really about.
+ */
+export function BottomTabs() {
+  const pathname = usePathname();
+
+  return (
+    <nav
+      aria-label="Sections"
+      // The safe-area inset keeps the tabs clear of the iPhone home indicator
+      // rather than sitting underneath it.
+      className="flex shrink-0 border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden"
+    >
+      {NAV.map(({ href, label, icon: Icon }) => {
+        const active = pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={href}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors duration-150",
+              active ? "text-accent" : "text-muted",
+            )}
+          >
+            <Icon aria-hidden className="size-5" strokeWidth={1.75} />
+            {label}
           </Link>
         );
       })}
@@ -97,7 +133,8 @@ export function TopBar({
   const behind = closed < pace;
   return (
     <header className="flex h-12 shrink-0 items-center gap-5 border-b border-line bg-surface px-4">
-      <span className="md:hidden">
+      {/* The wordmark replaces the rail's branding on small screens. */}
+      <span className="shrink-0 md:hidden">
         <Wordmark />
       </span>
       <Stat label="Month" value={`${month}/18`} />
@@ -243,9 +280,12 @@ export function StudioShell({
       <div className="flex min-h-0 flex-1">
         <Rail />
         <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+        {/* ≥1280: the third pane. Below that the same content arrives as a
+            drawer or sheet, so nothing is unreachable (§9.4). */}
         <Inspector>{inspector}</Inspector>
       </div>
       {statusLine}
+      <BottomTabs />
     </div>
   );
 }
