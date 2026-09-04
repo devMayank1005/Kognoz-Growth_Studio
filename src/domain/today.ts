@@ -28,7 +28,10 @@ export interface TodayCard {
 }
 
 const isLive = (c: { stage: string }) => !CLOSED.has(c.stage);
-const dayOf = (iso: string) => new Date(`${iso}T00:00:00Z`).getTime();
+// Tolerates a full ISO timestamp as well as YYYY-MM-DD. Appending the time to
+// an already-timestamped string produced NaN, which dropped rows silently
+// rather than failing loudly.
+const dayOf = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00Z`).getTime();
 const daysBetween = (fromISO: string, now: Date) =>
   Math.floor((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - dayOf(fromISO)) / MS_PER_DAY);
 

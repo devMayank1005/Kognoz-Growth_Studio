@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { TOWER_TARGETS } from "./revenue";
-import { PRACTICES, TOWERS, TOWER_KEYS, practiceByName, practicesForSignal, towerOfPractice } from "./practices";
+import {
+  PRACTICES,
+  TOWERS,
+  TOWER_KEYS,
+  practiceByName,
+  practiceForTarget,
+  practicesForSignal,
+  towerOfPractice,
+} from "./practices";
 
 describe("practices", () => {
   it("carries the 10 practices across the two brands", () => {
@@ -57,5 +65,35 @@ describe("practicesForSignal", () => {
 
   it("returns an empty list for a signal no practice claims", () => {
     expect(practicesForSignal("ZZ9")).toEqual([]);
+  });
+});
+
+describe("practiceForTarget — AMS must not be routed by signal order", () => {
+  /**
+   * L6 is declared by `nurture` (T4) before `hrtx` (T2), so
+   * practicesForSignal("L6")[0] returns Nurture. The scorer correctly pins an
+   * aged L6 to T2, but both row builders took the signal's first practice, so
+   * an AMS door was added to T4 with the T4 partner and the T4 revenue target.
+   */
+  it("routes an AMS target to the T2 HR Transformation practice", () => {
+    const practice = practiceForTarget({ ams: true, signal: "L6" });
+    expect(practice?.id).toBe("hrtx");
+    expect(towerOfPractice(practice!.id)).toBe("T2");
+  });
+
+  it("still uses the signal's practice when the target is not AMS", () => {
+    expect(practiceForTarget({ ams: false, signal: "L6" })?.id).toBe(
+      practicesForSignal("L6")[0]?.id,
+    );
+  });
+
+  it("routes AMS to T2 whatever the signal says", () => {
+    for (const signal of ["L6", "L13", "L9", "H5"]) {
+      expect(towerOfPractice(practiceForTarget({ ams: true, signal })!.id)).toBe("T2");
+    }
+  });
+
+  it("falls back to the signal practice when AMS is absent", () => {
+    expect(practiceForTarget({ signal: "L1" })?.id).toBe(practicesForSignal("L1")[0]?.id);
   });
 });

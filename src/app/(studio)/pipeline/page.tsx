@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
  */
 const Kanban = dynamic(() => import("@/components/studio/kanban").then((m) => m.Kanban));
 import { PipelineTable } from "@/components/studio/pipeline-table";
+import { QuickAdd } from "@/components/studio/quick-add";
 import { loadPipeline, type PipelineCardRow } from "@/db/queries";
 import { practiceById, TOWERS } from "@/domain/practices";
 import { requireSession } from "@/lib/session";
@@ -74,6 +75,10 @@ export default async function PipelinePage(props: PageProps<"/pipeline">) {
             <span className="text-faint transition-colors group-hover:text-danger">✕</span>
           </Link>
         )}
+      </div>
+
+      <div className="mb-3">
+        <QuickAdd />
       </div>
 
       {isKanban ? <Kanban cards={cards} /> : <PipelineTable cards={cards} />}

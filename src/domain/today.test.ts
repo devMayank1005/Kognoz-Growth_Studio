@@ -88,3 +88,31 @@ describe("amsWindows", () => {
     expect(amsWindows([target({ ams: true, inPipeline: true })])).toHaveLength(0);
   });
 });
+
+describe("withPartnerTooLong — the shape the database actually returns", () => {
+  const card = (dispatchedAt: string) => ({
+    id: "c1", account: "Emaar", stage: "Plan reach-out",
+    dueOn: "2026-09-01", dispatchedAt, next: "packet with partner", partner: "Rahul",
+  });
+
+  /**
+   * loadPipeline returns a timestamp column. dayOf used to build
+   * `${iso}T00:00:00Z`, so a full ISO string parsed to NaN and the row vanished
+   * from the list instead of failing loudly. The page separately passed "" for
+   * every card, so this list could never populate at all.
+   */
+  it("counts the days when given a full ISO timestamp", () => {
+    const rows = withPartnerTooLong([card("2026-09-01T10:22:00.000Z")], new Date("2026-09-08T00:00:00Z"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].daysWithPartner).toBe(7);
+  });
+
+  it("counts the days when given a plain date", () => {
+    const rows = withPartnerTooLong([card("2026-09-01")], new Date("2026-09-08T00:00:00Z"));
+    expect(rows[0].daysWithPartner).toBe(7);
+  });
+
+  it("still ignores a card that was never dispatched", () => {
+    expect(withPartnerTooLong([card("")], new Date("2026-09-08T00:00:00Z"))).toHaveLength(0);
+  });
+});

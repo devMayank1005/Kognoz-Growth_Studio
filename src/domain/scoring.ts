@@ -13,6 +13,7 @@ import { industryOf, type Industry } from "./industry";
 import { practicesForSignal, towerOfPractice } from "./practices";
 import type { TowerKey } from "./revenue";
 import { AMS_WINDOW_END_DAYS, AMS_WINDOW_START_DAYS, freshness, isAmsWindow, signalByCode, tierWeight, type Engine, type Tier } from "./signals";
+import { normaliseForDnc } from "./dnc";
 
 export const FRESHNESS_WEIGHT = 35;
 export const AMS_SCORE = 30;
@@ -121,7 +122,13 @@ export function rankTargets(input: RankInput): Target[] {
   const liveCardByAccount = new Map(
     pipeline.filter((c) => !CLOSED_STAGES.has(c.stage)).map((c) => [c.account, c]),
   );
-  const blocked = new Set(dnc);
+  /**
+   * Normalised the same way the enforced gate does. This was `new Set(dnc)` with
+   * a raw `blocked.has(name)`, i.e. exact and case-sensitive — so a DNC entry of
+   * "Damac" still ranked "damac" and "  Damac  " as doors to open first, while
+   * addCard correctly refused all three. The rule is meant to live in one place.
+   */
+  const blocked = new Set(dnc.map((d) => normaliseForDnc(d)));
   const best = new Map<string, Target>();
 
   const consider = (
@@ -129,7 +136,7 @@ export function rankTargets(input: RankInput): Target[] {
     item: SweepItem,
     flags: { ams?: boolean; radarOnly?: boolean } = {},
   ): void => {
-    if (!name || blocked.has(name)) return;
+    if (!name || blocked.has(normaliseForDnc(name))) return;
 
     const account = accountByName.get(name);
     const country = item.country || account?.country || "—";

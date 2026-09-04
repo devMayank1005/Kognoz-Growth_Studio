@@ -1,6 +1,7 @@
 "use server";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db, withOrg } from "@/db/client";
@@ -177,6 +178,16 @@ export async function addCard(
 
     return opp;
   });
+
+  // Adding a card is the product's primary action, and until now it invalidated
+  // nothing: the top bar, Pipeline, Today and Dashboard kept serving whatever
+  // the router had cached, so the operator saw the write not happen. The shared
+  // layout needs its own invalidation — soft navigation never refetches it.
+  revalidatePath("/pipeline");
+  revalidatePath("/today");
+  revalidatePath("/dashboard");
+  revalidatePath("/accounts");
+  revalidatePath("/", "layout");
 
   return {
     ok: true,

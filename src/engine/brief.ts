@@ -1,4 +1,4 @@
-import { practicesForSignal } from "@/domain/practices";
+import { practiceForTarget } from "@/domain/practices";
 import type { Target } from "@/domain/scoring";
 
 import type { EngineChart, EngineRow } from "./schemas";
@@ -60,7 +60,10 @@ export function buildMorningBrief(input: {
 }
 
 function toRow(t: Target): EngineRow {
-  const practice = practicesForSignal(t.signal)[0];
+  // practiceForTarget, not practicesForSignal: an AMS door belongs to T2 no
+  // matter which signal surfaced it. EngineRow has no tower field, so the
+  // practice chosen here is what makeCard routes on.
+  const practice = practiceForTarget(t);
   return {
     solution: practice?.name ?? "Organization Transformation",
     company: t.name,

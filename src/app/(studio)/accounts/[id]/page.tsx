@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { loadAccountDossier } from "@/db/queries";
 import { practiceById, practicesForSignal } from "@/domain/practices";
+import { DismissSignal } from "@/components/studio/dismiss-signal";
 import { signalByCode } from "@/domain/signals";
 import { requireSession } from "@/lib/session";
 
@@ -43,7 +44,7 @@ export default async function AccountPage(props: PageProps<"/accounts/[id]">) {
             {signals.map((s, i) => {
               const def = signalByCode(s.code);
               return (
-                <li key={i} className="flex gap-2.5">
+                <li key={s.id ?? i} className="flex gap-2.5">
                   {/* §9.5 — tier-1 is a filled cyan dot, tier-2 outlined. */}
                   <span
                     className={`mt-1.5 size-1.5 shrink-0 rounded-full ${
@@ -53,7 +54,8 @@ export default async function AccountPage(props: PageProps<"/accounts/[id]">) {
                   <div className="min-w-0">
                     <p className="text-[13px] text-body">{s.headline ?? def?.description ?? s.code}</p>
                     <p className="text-[13px] leading-relaxed text-muted">{s.evidence}</p>
-                    <p className="text-[11px] text-faint">
+                    <p className="flex items-baseline gap-1.5 text-[11px] text-faint">
+                      <span>
                       {s.code} · {s.date}
                       {/* Every fact carries a source, or says it has none. */}
                       {s.url ? (
@@ -66,6 +68,10 @@ export default async function AccountPage(props: PageProps<"/accounts/[id]">) {
                       ) : (
                         " · unsourced"
                       )}
+                      </span>
+                      {/* A wrong radar find used to rank forever — nothing could
+                          write signals.dismissedAt. */}
+                      <DismissSignal signalId={s.id} label={s.code} />
                     </p>
                   </div>
                 </li>

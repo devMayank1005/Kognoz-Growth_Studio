@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
+import { generateDraft } from "@/app/actions/card-actions";
 import type { EngineRow } from "@/engine/schemas";
 import { cn } from "@/lib/cn";
 
@@ -23,6 +24,8 @@ type RowState = "idle" | "adding" | "added" | "blocked";
 
 export function ActionTable({ rows, onAdded }: { rows: EngineRow[]; onAdded?: () => void }) {
   const [state, setState] = useState<Record<number, RowState>>({});
+  const [added, setAdded] = useState<Record<number, string>>({});
+  const [drafting, setDrafting] = useState<number | null>(null);
 
   if (rows.length === 0) return null;
 
@@ -32,6 +35,9 @@ export function ActionTable({ rows, onAdded }: { rows: EngineRow[]; onAdded?: ()
       const result = await addCard(row);
       if (result.ok) {
         setState((s) => ({ ...s, [index]: "added" }));
+        // Keep the id: the next thing an operator wants is the first note,
+        // and without it they had to leave chat and hunt for the row.
+        setAdded((a) => ({ ...a, [index]: result.id }));
         toast.success(`${result.account} added`, {
           description: `${result.practice} · ${result.tower} · ${result.partner} · ${fmtValue(result.value)}`,
         });
@@ -112,6 +118,30 @@ export function ActionTable({ rows, onAdded }: { rows: EngineRow[]; onAdded?: ()
                   >
                     {s === "added" ? "✓ Added" : s === "blocked" ? "Blocked" : s === "adding" ? "Adding…" : "＋ Add"}
                   </button>
+                  {added[i] && (
+                    <button
+                      type="button"
+                      disabled={drafting === i}
+                      onClick={async () => {
+                        setDrafting(i);
+                        try {
+                          const d = await generateDraft(added[i]);
+                          if (!d.ok) return toast.error(d.message);
+                          toast.success(`Draft ready for ${row.company}`, {
+                            description: d.subject,
+                            action: { label: "Open in mail", onClick: () => window.open(d.mailto) },
+                          });
+                        } catch {
+                          toast.error("Could not write the draft");
+                        } finally {
+                          setDrafting(null);
+                        }
+                      }}
+                      className="ml-1 rounded px-2 py-1 text-[13px] font-medium text-accent transition-colors duration-150 hover:bg-panel disabled:opacity-40"
+                    >
+                      {drafting === i ? "…" : "✓ Draft"}
+                    </button>
+                  )}
                 </td>
               </motion.tr>
             );

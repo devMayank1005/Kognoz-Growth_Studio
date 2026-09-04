@@ -7,6 +7,7 @@ import * as schema from "@/db/schema";
 import { authErrors } from "@/db/schema";
 import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
 import { readEnv, readSecret, requireEnv } from "@/lib/env";
+import { redactSecrets } from "@/lib/redact";
 
 /**
  * Better Auth owns identity and membership: users, sessions, organizations and
@@ -112,9 +113,9 @@ export const auth = betterAuth({
         await db.insert(authErrors).values({
           path,
           code: e?.body?.code ?? (e?.status ? String(e.status) : null),
-          // Bounded: an error message is diagnostic, not a place to accumulate
-          // arbitrary provider output.
-          message: (e?.body?.message ?? e?.message ?? String(error)).slice(0, 800),
+          // Redacted and bounded: an error message is diagnostic, not a place
+          // for a credential or for arbitrary provider output.
+          message: redactSecrets(e?.body?.message ?? e?.message ?? String(error)),
         });
       } catch {
         // Diagnostics must never take down the request they are describing.
@@ -136,6 +137,12 @@ export const auth = betterAuth({
     // with no security gain given SSO is the only way in.
     expiresIn: 60 * 60 * 24 * 7,
     updateAge: 60 * 60 * 24,
+    // Without this, Better Auth pushes expiresAt to now+7d on every request
+    // once a session is a day old, so a session used weekly never expires. With
+    // SSO-only sign-in, disabling someone in Entra is the only offboarding
+    // lever there is, and it did nothing: the live database already held
+    // sessions 8+ days old. A hard 7-day cap bounds that window.
+    disableSessionRefresh: true,
   },
 });
 

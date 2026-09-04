@@ -6,13 +6,14 @@
  * 1. `people` has NO email, phone, address, or personal-social column. PRD §8
  *    makes that a hard compliance boundary, so the column simply does not
  *    exist — a bug cannot write what there is nowhere to put.
- * 2. Every org-scoped table carries `orgId`. Postgres RLS keys off it, and the
+ * 2. Every org-scoped table carries `orgId`, and every query filters on it.
+ *    RLS is not enabled — that filter is the isolation. The
  *    repository layer sets `app.org_id` per transaction, so a forgotten filter
  *    fails closed instead of leaking across orgs.
  *
  * Organisations, members, and roles are Better Auth's tables (`./auth`), not
  * ours — one definition of "who belongs to which org", used by both the auth
- * layer and RLS. Org-level product settings hang off `settings`.
+ * layer. Org-level product settings hang off `settings`.
  *
  * Practices and towers are NOT tables. They are fixed configuration living in
  * `src/domain/practices.ts`, which is unit-tested and the single source of
@@ -199,6 +200,12 @@ export const activityTypes = [
   // Access granted by domain allowlist — PRD §8 requires an audit entry on
   // every write, and granting a workspace is a write.
   "member_added",
+  // PRD §5 — values are editable, and a card crossing into core is a scoreboard
+  // metric (§7) that could not be produced while nothing recorded the crossing.
+  "value_changed",
+  "wedge_to_core",
+  // A radar find that is wrong pollutes ranking forever unless it can be retired.
+  "signal_dismissed",
 ] as const;
 
 export const activities = pgTable(

@@ -1,17 +1,20 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { and, desc, eq } from "drizzle-orm";
 
 import { db, withOrg } from "@/db/client";
-import { accounts, activities, dnc, drafts, opportunities, people, settings, stages, user } from "@/db/schema";
+import { accounts, activities, dnc, drafts, opportunities, people, settings, signals, stages, user } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
 import { applyOutcome, type Outcome } from "@/domain/outcomes";
 import { buildPacket } from "@/domain/packet";
 import { practiceById } from "@/domain/practices";
-import { afterSend, stageKind, type DraftKind } from "@/domain/touches";
+import { afterSend, defaultDraftKind, type DraftKind } from "@/domain/touches";
 import { writeDraft } from "@/engine/draft";
-import { logModelCall } from "@/engine/budget";
+import { checkBudget, logModelCall } from "@/engine/budget";
 import { PROSE_MODEL, engineConfigError } from "@/engine/client";
+import { CORE_FLOOR, WHALE_FLOOR, tierFor, type Tier } from "@/domain/routing";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -80,12 +83,28 @@ export async function generateDraft(opportunityId: string, kind?: DraftKind): Pr
   if (blocked) return { ok: false, message: `${blocked} No draft can be written.` };
 
   const practice = practiceById(card.practiceId);
-  const chosen = kind ?? stageKind(card.stage);
+  // Same rule as the inspector, so a caller that omits the kind still gets the
+  // two-beat play rather than a pitch that spends a touch.
+  const chosen = kind ?? defaultDraftKind(card);
 
   // A misconfigured key cannot be retried into working. Say so before spending
   // a round trip and before offering the operator a button that cannot succeed.
   if (engineConfigError) {
     return { ok: false, message: `The engine is not configured on the server: ${engineConfigError}` };
+  }
+
+  /**
+   * Drafts spent against the daily budget without being subject to it —
+   * checkBudget had exactly one caller, the chat route. The failure mode was
+   * inverted from what an operator expects: a morning sweep could exhaust the
+   * day and then only chat, the one guarded path, refused.
+   */
+  const budget = await checkBudget(session.orgId);
+  if (!budget.allowed) {
+    return {
+      ok: false,
+      message: `Daily model budget reached (${budget.used}/${budget.budget}). Drafts resume tomorrow, or raise the budget in Settings.`,
+    };
   }
 
   const started = Date.now();
@@ -190,9 +209,21 @@ export async function markDraftSent(
         dueOn: result.dueOn,
         updatedAt: new Date(),
       })
-      .where(eq(opportunities.id, opportunityId));
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, session.orgId)));
 
-    await tx.update(drafts).set({ sentAt: new Date() }).where(eq(drafts.id, draftId));
+    // Scoped to the org AND the card. This used to update by draft id alone, so
+    // a leaked or guessed UUID could mark another org's draft as sent while the
+    // audit row recorded this caller's card.
+    await tx
+      .update(drafts)
+      .set({ sentAt: new Date() })
+      .where(
+        and(
+          eq(drafts.id, draftId),
+          eq(drafts.opportunityId, opportunityId),
+          eq(drafts.orgId, session.orgId),
+        ),
+      );
 
     await tx.insert(activities).values({
       orgId: session.orgId, opportunityId, accountId: card.accountId,
@@ -366,4 +397,99 @@ export async function loadTimeline(opportunityId: string) {
     .where(and(eq(activities.orgId, session.orgId), eq(activities.opportunityId, opportunityId)))
     .orderBy(desc(activities.at))
     .limit(20);
+}
+
+/* ------------------------------------------------------------------ value */
+
+/**
+ * Sets a card's value, per PRD §5 ("Values: editable").
+ *
+ * Until now the only value a card ever had was the engine's default: there was
+ * no writer anywhere, so a wedge could never be re-priced as it grew. The tier
+ * is recomputed from the value rather than stored independently, and crossing
+ * into core from a wedge writes its own activity — that crossing is a §7
+ * scoreboard metric which nothing could previously produce.
+ */
+export async function setCardValue(
+  opportunityId: string,
+  value: number,
+): Promise<{ ok: true; value: number; tier: Tier; whale: boolean } | { ok: false; message: string }> {
+  const session = await requireSession();
+
+  if (!Number.isFinite(value) || value < 0) return { ok: false, message: "Value must be a positive number." };
+  if (value > 100_000_000) return { ok: false, message: "That value looks wrong — cap is $100M." };
+
+  const card = await loadCard(session.orgId, opportunityId);
+  if (!card) return { ok: false, message: "Card not found." };
+
+  const rounded = Math.round(value);
+  const tier = tierFor(rounded);
+  const whale = rounded >= WHALE_FLOOR;
+  const crossedToCore = card.value < 100_000 && rounded >= CORE_FLOOR;
+
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(opportunities)
+      .set({ value: rounded, tier, whale, updatedAt: new Date() })
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, session.orgId)));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      opportunityId,
+      accountId: card.accountId,
+      type: crossedToCore ? "wedge_to_core" : "value_changed",
+      payloadJson: { from: card.value, to: rounded, tier, whale },
+      actorId: session.userId,
+    });
+  });
+
+  revalidatePath("/pipeline");
+  revalidatePath("/dashboard");
+  revalidatePath("/", "layout");
+
+  return { ok: true, value: rounded, tier, whale };
+}
+
+/* ---------------------------------------------------------------- signals */
+
+/**
+ * Retires a signal so it stops ranking.
+ *
+ * `signals.dismissedAt` had three readers and no writer at all, so one wrong
+ * radar find polluted the brief, the Today list and every account count
+ * permanently, with no way for the operator to say "this is not real".
+ */
+export async function dismissSignal(
+  signalId: string,
+  reason?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const session = await requireSession();
+
+  const [signal] = await db
+    .select({ id: signals.id, accountId: signals.accountId, code: signals.code })
+    .from(signals)
+    .where(and(eq(signals.id, signalId), eq(signals.orgId, session.orgId)))
+    .limit(1);
+  if (!signal) return { ok: false, message: "Signal not found." };
+
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(signals)
+      .set({ dismissedAt: new Date() })
+      .where(and(eq(signals.id, signalId), eq(signals.orgId, session.orgId)));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      accountId: signal.accountId,
+      type: "signal_dismissed",
+      payloadJson: { signalId, code: signal.code, reason: reason ?? "" },
+      actorId: session.userId,
+    });
+  });
+
+  revalidatePath("/today");
+  revalidatePath("/accounts");
+  revalidatePath("/", "layout");
+
+  return { ok: true };
 }

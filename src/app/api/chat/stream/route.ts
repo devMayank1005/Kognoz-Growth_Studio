@@ -11,7 +11,7 @@ import { EXTRACT_MODEL, PROSE_MODEL, engineConfigError, extractRows, readUsage, 
 import { matchIntent } from "@/engine/local";
 import { buildLiveState } from "@/engine/state";
 import { appendTurns, type ThreadTurn } from "@/db/threads";
-import { requireSession } from "@/lib/session";
+import { getStudioSession } from "@/lib/session";
 import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +29,16 @@ export const maxDuration = 60;
  * Events on the wire: `state`, `delta`, `rows`, `error`, `done`.
  */
 export async function POST(request: Request) {
-  const session = await requireSession();
+  // 401 rather than a redirect: fetch would follow a 307 and hand the client the
+  // sign-in page's HTML, which the SSE parser silently skipped — leaving the
+  // turn spinning on "…" with no explanation.
+  const session = await getStudioSession();
+  if (!session) {
+    return Response.json(
+      { error: "signed-out", message: "Your session has ended. Sign in again." },
+      { status: 401 },
+    );
+  }
 
   const body = (await request.json()) as { message?: string };
   const message = String(body.message ?? "").trim();
@@ -39,8 +48,33 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      /**
+       * Writes one SSE frame, tolerating a client that has gone away.
+       *
+       * Next aborts the stream when the browser disconnects, after which
+       * `enqueue` throws "Controller is already closed". That throw used to
+       * unwind the generation loop, write a spurious error row, throw again out
+       * of the catch, and skip the persist entirely — so closing the tab
+       * mid-answer lost the answer, which is exactly the case the persistence
+       * was written for. Delivery is best-effort; the write is not.
+       */
+      let clientGone = false;
       const send = (event: string, data: unknown) => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        if (clientGone) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          clientGone = true;
+        }
+      };
+
+      /** Closing a stream the client already dropped throws too. */
+      const close = () => {
+        try {
+          controller.close();
+        } catch {
+          // Already gone. The answer is saved either way.
+        }
       };
 
       /**
@@ -101,7 +135,7 @@ export async function POST(request: Request) {
           send("rows", { chart: local.chart, rows: local.rows });
           send("done", { source: "local" });
           await persist({ text: local.text, chart: local.chart, rows: local.rows });
-          controller.close();
+          close();
           return;
         }
         if (intent?.kind === "add" || intent?.kind === "sweep") {
@@ -109,7 +143,7 @@ export async function POST(request: Request) {
           send("state", { source: "local", intent: intent.kind });
           send("rows", { chart: null, rows: [], action: intent });
           send("done", { source: "local" });
-          controller.close();
+          close();
           return;
         }
 
@@ -121,7 +155,7 @@ export async function POST(request: Request) {
             message: `The engine is not configured on the server: ${engineConfigError} Local questions — pipeline, what's due today, who to open first — still work.`,
           });
           send("done", { source: "error" });
-          controller.close();
+          close();
           return;
         }
 
@@ -132,7 +166,7 @@ export async function POST(request: Request) {
             message: `Daily model budget reached (${budget.used}/${budget.budget}). Local questions — pipeline, what's due today, who to open first — still work.`,
           });
           send("done", { source: "budget" });
-          controller.close();
+          close();
           return;
         }
 
@@ -197,7 +231,7 @@ export async function POST(request: Request) {
           await logModelCall({ orgId: session.orgId, kind: "chat_prose", model: PROSE_MODEL, error: detail });
           send("error", { message: "The engine could not answer that. Try again." });
           send("done", { source: "error" });
-          controller.close();
+          close();
           return;
         }
 
@@ -241,14 +275,16 @@ export async function POST(request: Request) {
           send("error", { message: "The answer is above, but the action table could not be built." });
         }
 
-        send("done", { source: "engine", cacheRead: usage.cacheReadTokens });
+        // Persist BEFORE announcing completion: the write is the guarantee,
+        // the frame is only a courtesy to a client that may no longer be there.
         // The prose stands even when extraction failed, so persist either way.
         await persist({ text: prose, chart: answerChart, rows: answerRows });
-        controller.close();
+        send("done", { source: "engine", cacheRead: usage.cacheReadTokens });
+        close();
       } catch (err) {
         console.error("[chat] stream failed", err);
         send("error", { message: "Something went wrong." });
-        controller.close();
+        close();
       }
     },
   });
@@ -267,12 +303,13 @@ export async function POST(request: Request) {
 import type { Intent } from "@/engine/local";
 import type { Target } from "@/domain/scoring";
 import type { PipelineCardRow } from "@/db/queries";
-import { practiceById, practicesForSignal } from "@/domain/practices";
+import { practiceById, practiceForTarget } from "@/domain/practices";
 
 const fmtM = (n: number) => `$${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
 
 function rowFromTarget(t: Target) {
-  const practice = practicesForSignal(t.signal)[0];
+  // See brief.ts — AMS is routed by age, not by signal order.
+  const practice = practiceForTarget(t);
   return {
     solution: practice?.name ?? "TBD",
     company: t.name,

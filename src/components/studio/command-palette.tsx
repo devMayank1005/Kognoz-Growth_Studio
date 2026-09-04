@@ -3,9 +3,9 @@
 import { Command } from "cmdk";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 
 import { NAV } from "./shell";
+import { runSweep } from "@/lib/run-sweep";
 
 /**
  * ⌘K (PRD §9.9).
@@ -98,10 +98,7 @@ export function CommandPalette({
             <Item
               onSelect={async () => {
                 setOpen(false);
-                const r = await fetch("/api/sweeps/run", { method: "POST" });
-                toast[r.ok ? "success" : "error"](
-                  r.ok ? "Sweep started. Findings land as they are found." : "Could not start the sweep.",
-                );
+                await runSweep();
               }}
             >
               Run the sweep again

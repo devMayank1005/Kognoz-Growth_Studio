@@ -66,6 +66,36 @@ export function afterSend(
   };
 }
 
+/**
+ * Signals that mean "someone just took the job" — the two-beat play (§4.6).
+ * A congratulation, then the real ask 21 days later.
+ */
+const APPOINTMENT_SIGNALS = new Set(["L1", "H5"]);
+
+/** How fresh an appointment has to be for a congratulation to land, in days. */
+export const CONGRATS_WINDOW_DAYS = 10;
+
+/**
+ * The draft kind a card should default to.
+ *
+ * `stageKind` alone can never return "congrats", so the two-beat play was dead:
+ * every fresh CHRO appointment got a first-touch pitch that spent one of the
+ * three touches, which is exactly what `afterSend` is written to avoid. A
+ * congratulation costs no touch and schedules beat 2 at +21 days.
+ */
+export function defaultDraftKind(card: {
+  stage: string;
+  touches: number;
+  signal?: string;
+  ageDays?: number;
+}): DraftKind {
+  const fresh = card.ageDays === undefined || card.ageDays <= CONGRATS_WINDOW_DAYS;
+  if (card.touches === 0 && card.signal && APPOINTMENT_SIGNALS.has(card.signal) && fresh) {
+    return "congrats";
+  }
+  return stageKind(card.stage);
+}
+
 /** The default draft kind for a card's stage, as the prototype does. */
 export function stageKind(stage: string): DraftKind {
   return (

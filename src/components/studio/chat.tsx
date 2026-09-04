@@ -2,13 +2,14 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import dynamic from "next/dynamic";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
 import type { ThreadTurn } from "@/db/threads";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
+import { runSweep } from "@/lib/run-sweep";
 import { useWorkspace } from "@/store/selection";
 
 import { ActionTable } from "./action-table";
@@ -76,6 +77,7 @@ const SUGGESTIONS = [
 
 export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
   const params = useSearchParams();
+  const router = useRouter();
 
   // History arrives server-rendered. It used to be fetched from /api/thread in
   // a mount effect, which meant html -> hydrate -> fetch -> render before the
@@ -91,7 +93,11 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
   const draft = useWorkspace((s) => s.draft);
   const setDraft = useWorkspace((s) => s.setDraft);
   const handover = params.get("q");
-  const input = handover ?? draft;
+  // Bound to the draft, NOT to the search param. Reading `handover ?? draft`
+  // re-derived from the URL on every render, so typing did nothing and the
+  // question reappeared after sending with Ask still enabled — one click from a
+  // duplicate Opus call. The effect below is the only thing that consumes it.
+  const input = draft;
   const setInput = useCallback(
     (value: string) => {
       setDraft(value);
@@ -105,11 +111,13 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
   const pinnedRef = useRef(true);
   const rafRef = useRef<number | null>(null);
 
-  // The ?q= handover is a one-shot: fold it into the draft so it is not
-  // re-applied on every render and survives as normal draft text.
+  // Genuinely a one-shot now: fold ?q= into the draft and clear it from the URL,
+  // so nothing can re-apply it.
   useEffect(() => {
-    if (handover) setDraft(handover);
-  }, [handover, setDraft]);
+    if (!handover) return;
+    setDraft(handover);
+    router.replace("/chat", { scroll: false });
+  }, [handover, setDraft, router]);
 
   /**
    * Scrolling is coalesced into one frame. This used to fire a smooth
@@ -156,6 +164,17 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
         body: JSON.stringify({ message: text }),
       });
 
+      // 401 is the session ending, not an engine failure. Say so and offer the
+      // way back, rather than leaving the turn on "…" forever.
+      if (response.status === 401) {
+        patch((turn) => ({
+          ...turn,
+          awaitingRows: false,
+          error: "Your session has ended. Sign in again to continue.",
+        }));
+        return;
+      }
+
       if (!response.ok || !response.body) throw new Error(`stream failed: ${response.status}`);
 
       const reader = response.body.getReader();
@@ -197,6 +216,12 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
               void runAddIntent(data.action).then((line) =>
                 patch((turn) => ({ ...turn, text: line })),
               );
+            } else if (data.action?.kind === "sweep") {
+              // The route dispatches this as a client action but nothing handled
+              // it, so "run the sweep again" produced a permanently blank bubble
+              // and started no sweep.
+              patch((turn) => ({ ...turn, awaitingRows: false, text: "Starting the sweep…" }));
+              void runSweep().then((line: string) => patch((turn) => ({ ...turn, text: line })));
             } else {
               patch((turn) => ({ ...turn, chart: data.chart, rows: data.rows, awaitingRows: false }));
             }
@@ -211,8 +236,11 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
         }
       }
     } catch {
-      patch((turn) => ({ ...turn, error: "The engine could not answer that.", awaitingRows: false }));
+      patch((turn) => ({ ...turn, error: "The engine could not answer that." }));
     } finally {
+      // Belt and braces: whatever happened above, this turn must not be left
+      // spinning on "…".
+      patch((turn) => (turn.awaitingRows ? { ...turn, awaitingRows: false } : turn));
       setBusy(false);
       scrollToEnd();
     }

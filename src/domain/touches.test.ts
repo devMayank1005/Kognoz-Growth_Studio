@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PARK_DAYS, TOUCH_CAP, afterSend } from "./touches";
+import { PARK_DAYS, TOUCH_CAP, afterSend, defaultDraftKind, stageKind } from "./touches";
 import { BEAT_TWO_DAYS } from "./today";
 
 const NOW = new Date("2026-09-02T00:00:00Z");
@@ -66,5 +66,35 @@ describe("afterSend — the two-beat CHRO play (PRD §4.6)", () => {
   it("gives an ordinary send a nearer due date than beat 2", () => {
     const r = afterSend(card(), "first-touch", NOW);
     expect(r.dueOn < plus(BEAT_TWO_DAYS)).toBe(true);
+  });
+});
+
+describe("defaultDraftKind — the two-beat play must be reachable", () => {
+  it("congratulates a fresh, untouched CHRO appointment", () => {
+    expect(defaultDraftKind({ stage: "Prospect", touches: 0, signal: "L1", ageDays: 3 })).toBe("congrats");
+    expect(defaultDraftKind({ stage: "Plan reach-out", touches: 0, signal: "H5", ageDays: 0 })).toBe("congrats");
+  });
+
+  it("does not congratulate once a touch has been spent", () => {
+    expect(defaultDraftKind({ stage: "Prospect", touches: 1, signal: "L1", ageDays: 3 })).toBe("first-touch");
+  });
+
+  it("does not congratulate a stale appointment", () => {
+    expect(defaultDraftKind({ stage: "Prospect", touches: 0, signal: "L1", ageDays: 40 })).toBe("first-touch");
+  });
+
+  it("does not congratulate a signal that is not an appointment", () => {
+    expect(defaultDraftKind({ stage: "Prospect", touches: 0, signal: "L6", ageDays: 1 })).toBe("first-touch");
+  });
+
+  it("falls back to the stage rule when no signal is known", () => {
+    expect(defaultDraftKind({ stage: "Meeting set", touches: 2 })).toBe(stageKind("Meeting set"));
+  });
+
+  /** The point of the play: a congratulation must not spend a touch. */
+  it("costs no touch and sets beat two 21 days out", () => {
+    const before = { stage: "Prospect", touches: 0 };
+    const after = afterSend(before, defaultDraftKind({ ...before, signal: "L1", ageDays: 2 }));
+    expect(after.touches).toBe(0);
   });
 });

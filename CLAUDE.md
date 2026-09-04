@@ -125,15 +125,23 @@ region-move plan: `docs/CLAIM-NEON.md`.
   form, not in a prompt, not searched for. Company-published generic mailboxes only; never guessed.
 - **DNC blocks add, draft, and packet** — every path, enforced in the domain layer.
 - Every mutation writes an audit entry.
-- Org isolation is enforced twice: `orgId` in the repository layer *and* Postgres RLS.
+- **Org isolation is enforced ONCE, in the repository layer.** Every query filters on the session's
+  `orgId`. **Postgres RLS is not enabled** — verified 2026-09-04: `pg_policies` is empty, 0 of 22
+  tables have `relrowsecurity`, and both connection strings use `neondb_owner`, which has
+  `rolbypassrls = true`, so policies would be ignored even if added. `withOrg()` sets an
+  `app.org_id` GUC that nothing currently reads; it is kept because it is the hook real policies
+  would use. Do not describe this as two layers. Adding a second org REQUIRES doing RLS first:
+  policies on all 12 org-scoped tables plus a NOBYPASSRLS application role.
 
 ## State that survives a refresh
 
 Two layers, deliberately separate:
 
 - **Server** — the chat thread. `api/chat/stream/route.ts` calls `appendTurns` when generation
-  completes, *before* closing the stream, so an answer still lands in history if the operator
-  refreshed or closed the tab mid-stream. `chat/page.tsx` server-renders it; there is no client
+  completes, *before* the `done` frame and before closing, so an answer still lands in history if
+  the operator refreshed or closed the tab mid-stream. That only works because `send()` swallows the
+  "Controller is already closed" throw a disconnect causes: before that guard existed the throw
+  unwound the loop and the persist never ran, so the guarantee this paragraph makes was false. `chat/page.tsx` server-renders it; there is no client
   fetch on mount.
 - **Browser** — `useWorkspace` in `src/store/selection.ts` (zustand `persist`): composer draft,
   selected card **id**, inspector open/closed, pipeline cursor. **Ids and view state only, never

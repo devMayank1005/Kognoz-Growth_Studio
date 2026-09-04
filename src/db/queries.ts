@@ -11,7 +11,8 @@ import { cache } from "react";
  * Read models for the engine and the studio.
  *
  * Everything here takes an explicit orgId. That is the same value `withOrg()`
- * pins for RLS, so the filter and the database policy agree.
+ * pins in `app.org_id`. That GUC has no policy reading it yet, so this filter
+ * is the only thing isolating orgs — it is not belt and braces.
  */
 
 export async function loadUniverse(orgId: string): Promise<UniverseAccount[]> {
@@ -106,6 +107,8 @@ export interface PipelineCardRow {
   evidence: string;
   url: string;
   signal: string;
+  /** YYYY-MM-DD, or "" — the day the packet went to the partner. */
+  dispatchedAt: string;
   zohoSyncedAt: string;
 }
 
@@ -133,6 +136,7 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
       evidence: opportunities.evidence,
       url: opportunities.url,
       signal: opportunities.signalCode,
+      dispatchedAt: opportunities.dispatchedAt,
       zohoSyncedAt: opportunities.zohoSyncedAt,
       createdAt: opportunities.createdAt,
     })
@@ -162,6 +166,9 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
     evidence: r.evidence ?? "",
     url: r.url ?? "",
     signal: r.signal ?? "",
+    // Date only: domain/today.ts builds `${iso}T00:00:00Z`, so a full timestamp
+    // would parse to NaN and silently drop the row from the partner-silence list.
+    dispatchedAt: r.dispatchedAt ? r.dispatchedAt.toISOString().slice(0, 10) : "",
     zohoSyncedAt: r.zohoSyncedAt ? r.zohoSyncedAt.toISOString() : "",
   }));
 });
@@ -310,6 +317,8 @@ export async function loadAccountDossier(orgId: string, accountId: string) {
   const [accountSignals, accountPeople, cards, timeline] = await Promise.all([
     db
       .select({
+        // id is needed so a wrong find can be dismissed from the dossier.
+        id: signals.id,
         code: signals.code, tier: signals.tier, headline: signals.headline,
         evidence: signals.evidence, url: signals.url, date: signals.date,
         confidence: signals.confidence,

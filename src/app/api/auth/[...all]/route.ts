@@ -3,6 +3,7 @@ import { toNextJsHandler } from "better-auth/next-js";
 import { db } from "@/db/client";
 import { authErrors } from "@/db/schema";
 import { auth } from "@/lib/auth";
+import { redactSecrets } from "@/lib/redact";
 
 /**
  * Better Auth's route handler, wrapped to record failures.
@@ -22,9 +23,12 @@ const handlers = toNextJsHandler(auth);
 const ENTRA_TOKEN_ENDPOINT =
   /^https:\/\/login\.microsoftonline\.com\/[^/]+\/oauth2\/v2\.0\/token$/;
 
-/** Strips anything address-shaped out of a provider message before storing it (§8). */
+/**
+ * Strips anything address-shaped out of a provider message before storing it
+ * (§8), then hands off to the shared credential redactor.
+ */
 function redact(text: string): string {
-  return text.replace(/[^\s@]+@[^\s@]+\.[^\s@]+/g, "[redacted]");
+  return redactSecrets(text.replace(/[^\s@]+@[^\s@]+\.[^\s@]+/g, "[redacted]")) ?? "";
 }
 
 /**

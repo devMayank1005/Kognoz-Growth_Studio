@@ -2,6 +2,7 @@ import { and, eq, gte, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { modelCalls, settings } from "@/db/schema";
+import { redactSecrets } from "@/lib/redact";
 
 import type { UsageReport } from "./client";
 
@@ -46,7 +47,12 @@ export async function checkBudget(orgId: string): Promise<BudgetCheck> {
   return { allowed: used < budget, used, budget };
 }
 
-/** Records a call for cost tracking and the budget guard. Never throws. */
+/**
+ * Records a call for cost tracking and the budget guard. Never throws.
+ *
+ * The error is redacted before it is stored: an SDK failure can embed the API
+ * key in its message, and this used to write it straight into the table.
+ */
 export async function logModelCall(input: {
   orgId: string;
   kind: string;
@@ -67,7 +73,7 @@ export async function logModelCall(input: {
       cacheReadTokens: input.usage?.cacheReadTokens ?? 0,
       cacheWriteTokens: input.usage?.cacheWriteTokens ?? 0,
       latencyMs: input.latencyMs,
-      error: input.error,
+      error: redactSecrets(input.error),
     });
   } catch (err) {
     // Telemetry must never take down the request it is measuring.

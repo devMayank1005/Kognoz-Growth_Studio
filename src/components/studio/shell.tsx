@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 
 import { UserMenu, type StudioUser } from "@/components/studio/user-menu";
+import { ThemeToggle } from "@/components/studio/theme-toggle";
+import { formatClock } from "@/lib/clock";
 import { cn } from "@/lib/cn";
 import { useWorkspace } from "@/store/selection";
 
@@ -157,9 +159,12 @@ export function TopBar({
         {pendingZoho > 0 && (
           <button
             type="button"
-            className="rounded bg-accent px-2.5 py-1 text-[13px] font-medium text-white transition-opacity duration-150 hover:opacity-90"
+            disabled
+            title="Zoho is not connected yet"
+            aria-label={`${pendingZoho} cards waiting for Zoho — not connected yet`}
+            className="cursor-not-allowed rounded border border-line px-2.5 py-1 text-[13px] text-faint"
           >
-            Push {pendingZoho} to Zoho
+            {pendingZoho} waiting for Zoho
           </button>
         )}
         <button
@@ -235,12 +240,21 @@ export function StatusLine({
         {sweeping
           ? `Sweeping ${sweep.done}/${sweep.total}`
           : lastSweepAt
-            ? `Last sweep ${new Date(lastSweepAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+            ? // Deterministic on both sides. toLocaleTimeString resolved the
+              // host's locale and timezone, so server and browser disagreed and
+              // the resulting hydration mismatch stripped the saved theme.
+              `Last sweep ${formatClock(lastSweepAt)} IST`
             : "No sweep yet today"}
       </span>
       <span className="num">{triggersToday} triggers today</span>
       <span>Zoho {lastZohoSync ? `synced ${lastZohoSync}` : "not connected"}</span>
       {error && <span className="text-danger">{error}</span>}
+
+      {/* Appearance lives at the far right of the strip: always reachable,
+          never floating over the table or the composer. */}
+      <div className="ml-auto flex items-center">
+        <ThemeToggle variant="icons" />
+      </div>
     </div>
   );
 }

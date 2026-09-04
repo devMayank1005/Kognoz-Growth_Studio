@@ -13,12 +13,12 @@
 
 import { cleanName } from "./routing";
 
-function normalise(value: string | null | undefined): string {
+export function normaliseForDnc(value: string | null | undefined): string {
   return cleanName(value).toLowerCase();
 }
 
 export function isDoNotContact(name: string | null | undefined, list: readonly string[]): boolean {
-  const target = normalise(name);
+  const target = normaliseForDnc(name);
   if (!target) return false;
-  return list.some((entry) => normalise(entry) === target);
+  return list.some((entry) => normaliseForDnc(entry) === target);
 }

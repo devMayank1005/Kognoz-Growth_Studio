@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { loadPipeline, loadSignals, loadUniverse } from "@/db/queries";
+import { loadDnc, loadPipeline, loadSignals, loadUniverse } from "@/db/queries";
 import { organization, settings } from "@/db/schema";
 import { persistSweep } from "@/db/sweeps";
 import { postBriefToOperators } from "@/db/threads";
@@ -27,6 +27,15 @@ export const dailySweep = inngest.createFunction(
   {
     id: "daily-sweep",
     retries: 1,
+    /**
+     * One run at a time, and at most one every five minutes.
+     *
+     * /api/sweeps/run had no throttle and the palette had no in-flight guard, so
+     * pressing ⌘K → "run the sweep again" N times launched N concurrent runs of
+     * eleven Opus calls each, with up to five web searches per call.
+     */
+    concurrency: { limit: 1 },
+    debounce: { period: "5m" },
     triggers: [
       // PRD §4.1: 05:30 local. The operator is in India.
       { cron: "TZ=Asia/Kolkata 30 5 * * *" },
@@ -80,16 +89,22 @@ export const dailySweep = inngest.createFunction(
     // Precompute the brief so opening the app is a database read, not a model
     // call (PRD §4.4).
     const brief = await step.run("post-morning-brief", async () => {
-      const [universe, sweepItems, pipeline] = await Promise.all([
+      const [universe, sweepItems, pipeline, dnc] = await Promise.all([
         loadUniverse(org.id),
         loadSignals(org.id),
         loadPipeline(org.id),
+        loadDnc(org.id),
       ]);
       const targets = rankTargets({
         items: sweepItems,
         universe,
         pipeline: pipeline.map((c) => ({ account: c.account, stage: c.stage })),
         history: sweepItems,
+        // The brief puts its top six straight into an action table with ＋ Add
+        // buttons. Without this, a blocked company was recommended as a door to
+        // open first — the hard gate still refused the add, but §8 says DNC
+        // disables every action, not just the last one.
+        dnc,
       });
       const built = buildMorningBrief({ targets, sweepCount: plan.sweeps.length, failed });
       const posted = await postBriefToOperators(org.id, {

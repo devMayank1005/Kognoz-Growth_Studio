@@ -254,3 +254,47 @@ describe("rankTargets — an aged L6 is an AMS play even when it arrives as a li
     expect(out[0].score).toBeGreaterThan(AMS_SCORE);
   });
 });
+
+describe("DNC in the ranker must match the enforced rule", () => {
+  const universe = [
+    { name: "Emaar", country: "UAE", segment: "property developer", status: "prospect" as const },
+    { name: "Damac", country: "UAE", segment: "property developer", status: "prospect" as const },
+  ];
+  const fresh = (account: string) => ({ account, signal: "H1", date: daysAgo(1) });
+
+  /**
+   * The ranker used `new Set(dnc)` with a raw `has(name)` — exact and
+   * case-sensitive — while addCard used the trimming, lowercasing
+   * isDoNotContact. A blocked company still appeared as a door to open first,
+   * contradicting §8's "DNC disables every action".
+   */
+  it("blocks a case variant, as addCard already did", () => {
+    const out = rankTargets({
+      items: [fresh("Emaar"), fresh("Damac")],
+      universe,
+      dnc: ["DAMAC"],
+      now: NOW,
+    });
+    expect(out.map((t) => t.name)).toEqual(["Emaar"]);
+  });
+
+  it("blocks a whitespace variant", () => {
+    const out = rankTargets({
+      items: [fresh("Emaar"), fresh("Damac")],
+      universe,
+      dnc: ["  Damac  "],
+      now: NOW,
+    });
+    expect(out.map((t) => t.name)).toEqual(["Emaar"]);
+  });
+
+  it("still blocks an exact match", () => {
+    const out = rankTargets({ items: [fresh("Damac")], universe, dnc: ["Damac"], now: NOW });
+    expect(out).toHaveLength(0);
+  });
+
+  it("ranks everything when the list is empty", () => {
+    const out = rankTargets({ items: [fresh("Emaar"), fresh("Damac")], universe, dnc: [], now: NOW });
+    expect(out).toHaveLength(2);
+  });
+});

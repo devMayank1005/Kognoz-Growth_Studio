@@ -1,7 +1,8 @@
-import { loadPipeline, loadSignals, loadUniverse } from "@/db/queries";
+import { loadDnc, loadPipeline, loadSignals, loadUniverse } from "@/db/queries";
 import { rankTargets } from "@/domain/scoring";
 import { amsWindows, dueNow, withPartnerTooLong, PARTNER_SILENCE_DAYS } from "@/domain/today";
-import { practicesForSignal } from "@/domain/practices";
+
+import { AmsRow, DueRow, NudgeRow } from "@/components/studio/today-rows";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -13,15 +14,20 @@ import { requireSession } from "@/lib/session";
 export default async function TodayPage() {
   const session = await requireSession();
 
-  const [pipeline, universe, signals] = await Promise.all([
+  const [pipeline, universe, signals, dnc] = await Promise.all([
     loadPipeline(session.orgId),
     loadUniverse(session.orgId),
     loadSignals(session.orgId),
+    loadDnc(session.orgId),
   ]);
 
+  // The full row, not a slice of it: a Row has to hand a whole PipelineCardRow
+  // to the inspector, and the earlier projection threw away everything but six
+  // fields — which is why Open could never have worked.
   const cards = pipeline.map((c) => ({
-    id: c.id, account: c.account, stage: c.stage,
-    dueOn: c.due, dispatchedAt: "", next: c.next, partner: c.partner,
+    ...c,
+    dueOn: c.due,
+    dispatchedAt: c.dispatchedAt,
   }));
 
   const targets = rankTargets({
@@ -29,6 +35,8 @@ export default async function TodayPage() {
     universe,
     pipeline: pipeline.map((c) => ({ account: c.account, stage: c.stage })),
     history: signals,
+    // The AMS list carries ＋ Add buttons, so a blocked company must not appear.
+    dnc,
   });
 
   const due = dueNow(cards);
@@ -44,7 +52,12 @@ export default async function TodayPage() {
 
       <Section title="Due now" count={due.length} empty="Nothing due. Go hunting.">
         {due.map((c) => (
-          <Row key={c.id} primary={c.account} secondary={`${c.next} · ${c.partner}`} action="Open" tone={c.dueOn < today() ? "amber" : undefined} meta={c.dueOn < today() ? "overdue" : "due today"} />
+          <DueRow
+            key={c.id}
+            card={c}
+            tone={c.dueOn < today() ? "amber" : undefined}
+            meta={c.dueOn < today() ? "overdue" : "due today"}
+          />
         ))}
       </Section>
 
@@ -58,19 +71,13 @@ export default async function TodayPage() {
 
       <Section title={`With partners over ${PARTNER_SILENCE_DAYS} days`} count={silent.length} empty="No packets going quiet.">
         {silent.map((c) => (
-          <Row key={c.id} primary={c.account} secondary={c.partner} action="Nudge" tone="amber" meta={`with partner ${c.daysWithPartner}d`} />
+          <NudgeRow key={c.id} card={c} meta={`with partner ${c.daysWithPartner}d`} />
         ))}
       </Section>
 
       <Section title="AMS windows opening" count={ams.length} empty="No AMS windows open right now.">
         {ams.slice(0, 10).map((t) => (
-          <Row
-            key={t.name}
-            primary={t.name}
-            secondary={`${practicesForSignal("L6").find((p) => p.id === "hrtx")?.name ?? "AI-Led HR Transformation"} · ${t.country}`}
-            action="＋ Add"
-            meta={`HCM live ~${Math.round(t.ageDays / 30)} months`}
-          />
+          <AmsRow key={t.name} target={t} meta={`HCM live ~${Math.round(t.ageDays / 30)} months`} />
         ))}
       </Section>
     </div>
@@ -100,24 +107,3 @@ function Section({
   );
 }
 
-function Row({
-  primary, secondary, action, meta, tone,
-}: { primary: string; secondary: string; action: string; meta?: string; tone?: "amber" }) {
-  return (
-    <li className="flex items-center gap-3 border-b border-line py-2 last:border-0">
-      <div className="min-w-0 flex-1">
-        <span className="text-[13px] font-medium text-body">{primary}</span>
-        <span className="ml-2 text-[13px] text-muted">{secondary}</span>
-      </div>
-      {meta && (
-        <span className={`text-[11px] ${tone === "amber" ? "text-amber" : "text-faint"}`}>{meta}</span>
-      )}
-      <button
-        type="button"
-        className="shrink-0 rounded px-2 py-1 text-[13px] font-medium text-accent transition-colors duration-150 hover:bg-panel"
-      >
-        {action}
-      </button>
-    </li>
-  );
-}

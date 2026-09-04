@@ -149,3 +149,23 @@ for (const p of PRACTICES) {
 export function practicesForSignal(code: string): readonly Practice[] {
   return BY_SIGNAL.get(code) ?? [];
 }
+
+/** The practice that owns the AMS / capability motion — T2 (PRD §4.2). */
+const AMS_PRACTICE_ID = "hrtx";
+
+/**
+ * The practice a ranked target should be sold as.
+ *
+ * NOT simply `practicesForSignal(signal)[0]`. An AMS door is defined by the age
+ * of its go-live, not by its signal: L6 is declared by `nurture` (T4) before
+ * `hrtx` (T2), so taking the signal's first practice sent every AMS target to
+ * T4 with the T4 partner and the T4 revenue target, while the scorer had
+ * correctly pinned it to T2.
+ *
+ * Takes the minimal shape rather than a `Target` so this stays in the domain's
+ * practice module without importing the scorer.
+ */
+export function practiceForTarget(t: { ams?: boolean; signal: string }): Practice | undefined {
+  if (t.ams) return practiceById(AMS_PRACTICE_ID);
+  return practicesForSignal(t.signal)[0];
+}

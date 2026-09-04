@@ -131,6 +131,8 @@ function DncList({ names }: { names: string[] }) {
   const [name, setName] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Which entry is being removed — the add form's `busy` is a separate thing. */
+  const [removing, setRemoving] = useState<string | null>(null);
 
   return (
     <Section title="Do not contact" note="Blocks add, draft and packet everywhere. Applies to the whole firm.">
@@ -144,13 +146,36 @@ function DncList({ names }: { names: string[] }) {
               <span className="text-body">{n}</span>
               <button
                 type="button"
+                disabled={removing === n}
                 onClick={async () => {
-                  await removeFromDnc(n);
-                  toast.success(`${n} removed from the list`);
+                  // Unblocking a company re-enables add, draft AND packet for it,
+                  // so this is the most destructive control in Settings. It used
+                  // to have no busy state and toasted success unconditionally —
+                  // even when the write failed.
+                  setRemoving(n);
+                  try {
+                    await removeFromDnc(n);
+                    toast.success(`${n} removed from the list`, {
+                      action: {
+                        label: "Undo",
+                        onClick: () => {
+                          void addToDnc(n, "restored after an accidental removal")
+                            .then(() => toast.success(`${n} blocked again`))
+                            .catch(() => toast.error(`Could not re-block ${n}`));
+                        },
+                      },
+                    });
+                  } catch {
+                    toast.error(`Could not remove ${n}`, {
+                      description: "The server did not answer. The block is still in place.",
+                    });
+                  } finally {
+                    setRemoving(null);
+                  }
                 }}
-                className="ml-auto text-[11px] text-faint hover:text-danger"
+                className="ml-auto text-[11px] text-faint transition-colors hover:text-danger disabled:opacity-40"
               >
-                remove
+                {removing === n ? "…" : "remove"}
               </button>
             </li>
           ))}
