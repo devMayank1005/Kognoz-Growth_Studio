@@ -10,8 +10,14 @@ import { checkBudget, logModelCall } from "@/engine/budget";
 import { EXTRACT_MODEL, PROSE_MODEL, engineConfigError, extractRows, readUsage, streamProse, webSearchError } from "@/engine/client";
 import { matchIntent } from "@/engine/local";
 import { buildLiveState } from "@/engine/state";
-import { appendTurns, type ThreadTurn } from "@/db/threads";
+import {
+  appendTurns,
+  createConversation,
+  loadConversation,
+  type ConversationTurn,
+} from "@/db/conversations";
 import { getStudioSession } from "@/lib/session";
+import { titleFromText } from "@/lib/titles";
 import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -40,9 +46,29 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = (await request.json()) as { message?: string };
+  const body = (await request.json()) as { message?: string; conversationId?: string | null };
   const message = String(body.message ?? "").trim();
   if (!message) return new Response("message is required", { status: 400 });
+
+  /**
+   * Resolve which conversation this belongs to, before streaming starts.
+   *
+   * `loadConversation` is scoped to the session's org AND user, so an id that
+   * is missing, malformed, or somebody else's resolves to nothing and a fresh
+   * conversation is created instead — the request is never refused over it and
+   * never writes into a conversation the caller does not own.
+   */
+  let conversationId = typeof body.conversationId === "string" ? body.conversationId : null;
+  let createdConversation: { id: string; title: string } | null = null;
+  if (conversationId) {
+    const existing = await loadConversation(session.orgId, session.userId, conversationId);
+    if (!existing) conversationId = null;
+  }
+  if (!conversationId) {
+    const title = titleFromText(message);
+    conversationId = await createConversation(session.orgId, session.userId, title);
+    createdConversation = { id: conversationId, title };
+  }
 
   const encoder = new TextEncoder();
 
@@ -88,10 +114,10 @@ export async function POST(request: Request) {
        * Never fatal — a thread that cannot be written must not take down the
        * answer the operator is already reading.
        */
-      const persist = async (answer: Pick<ThreadTurn, "text" | "chart" | "rows">) => {
+      const persist = async (answer: Pick<ConversationTurn, "text" | "chart" | "rows">) => {
         try {
           const at = new Date().toISOString();
-          await appendTurns(session.orgId, session.userId, [
+          await appendTurns(session.orgId, session.userId, conversationId, [
             { role: "user", text: message, at },
             { role: "engine", kind: "answer", at, ...answer },
           ]);
@@ -101,6 +127,11 @@ export async function POST(request: Request) {
       };
 
       try {
+        // Tell the client which conversation this landed in, so a first
+        // question can put the id in the URL and title the switcher without
+        // waiting for the answer to finish.
+        if (createdConversation) send("conversation", createdConversation);
+
         // ---------------------------------------------------------- state
         const [universe, sweepItems, people, pipeline, partners, dnc, settingsRow] = await Promise.all([
           loadUniverse(session.orgId),
@@ -252,8 +283,8 @@ export async function POST(request: Request) {
         }
 
         // ------------------------------------------------------ 4. Phase B
-        let answerChart: ThreadTurn["chart"] = null;
-        let answerRows: ThreadTurn["rows"] = [];
+        let answerChart: ConversationTurn["chart"] = null;
+        let answerRows: ConversationTurn["rows"] = [];
         try {
           const extractStarted = Date.now();
           const { extraction, usage: extractUsage } = await extractRows({ prose, liveState });

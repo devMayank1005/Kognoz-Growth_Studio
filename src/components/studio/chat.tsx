@@ -7,12 +7,14 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
-import type { ThreadTurn } from "@/db/threads";
+import type { ConversationSummary, ConversationTurn } from "@/db/conversations";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
 import { runSweep } from "@/lib/run-sweep";
 import { useWorkspace } from "@/store/selection";
 
 import { ActionTable } from "./action-table";
+import { ConversationSwitcher } from "./conversation-switcher";
+import { Prose } from "./prose";
 
 /**
  * Recharts is 366 KB and most answers have no chart, but a static import put it
@@ -75,7 +77,16 @@ const SUGGESTIONS = [
   "what's due today",
 ];
 
-export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
+export function Chat({
+  conversations,
+  conversationId,
+  initialTurns,
+}: {
+  conversations: ConversationSummary[];
+  /** Null only for an operator who has never asked anything. */
+  conversationId: string | null;
+  initialTurns: ConversationTurn[];
+}) {
   const params = useSearchParams();
   const router = useRouter();
 
@@ -106,7 +117,17 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
   );
 
   const [busy, setBusy] = useState(false);
+  /**
+   * The conversation being written to. Starts as the server's choice and is
+   * filled in from the stream's `conversation` frame when the first question of
+   * a brand-new conversation creates one.
+   */
+  const currentIdRef = useRef(conversationId);
   const endRef = useRef<HTMLDivElement>(null);
+  /** The turn list, watched so late-loading content cannot strand the view. */
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** The scroller itself, so the opening jump can set scrollTop outright. */
+  const scrollerRef = useRef<HTMLDivElement>(null);
   /** False once the operator scrolls up to read — do not yank them back down. */
   const pinnedRef = useRef(true);
   const rafRef = useRef<number | null>(null);
@@ -116,7 +137,9 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
   useEffect(() => {
     if (!handover) return;
     setDraft(handover);
-    router.replace("/chat", { scroll: false });
+    // Keep ?c= — dropping it would bounce the operator out of the conversation
+    // they are reading and back to the default one.
+    router.replace(currentIdRef.current ? `/chat?c=${currentIdRef.current}` : "/chat", { scroll: false });
   }, [handover, setDraft, router]);
 
   /**
@@ -134,6 +157,57 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
 
   useEffect(() => () => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  /**
+   * Open at the latest turn, not the oldest.
+   *
+   * Server-rendered history meant a refresh landed at the top of the
+   * conversation, so the answer the operator had just been reading was several
+   * screens below and looked lost — indistinguishable from the turn genuinely
+   * not having been saved.
+   *
+   * A single jump on mount is not enough: the chart is a `next/dynamic` import,
+   * so it arrives *after* this runs and grows the page by its own height,
+   * pushing the end back below the fold. Observing the content instead keeps
+   * the view at the end until the operator scrolls up — `pinnedRef` is already
+   * how "they are reading, leave them alone" is tracked, so late-arriving
+   * content is handled by the same rule as streaming text.
+   */
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    // scrollTop, not scrollIntoView: the latter walks up to the nearest
+    // scrollable ancestor and was competing with the router's own scroll
+    // handling, leaving the view at the top of the conversation.
+    const jump = () => {
+      const el = scrollerRef.current;
+      if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
+    };
+
+    /**
+     * Deferred a frame: the App Router restores scroll position after this
+     * effect runs, so jumping synchronously here is immediately undone.
+     *
+     * Unconditional, unlike `jump`. That restoration scrolls to the top, which
+     * fires `onScroll`, which sets `pinnedRef` to false because the end is now
+     * far below — so a pinned check here would disable the very jump that is
+     * meant to undo it. Pinning is re-armed straight after, and the observer
+     * below honours it from then on.
+     */
+    const frame = requestAnimationFrame(() => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+      pinnedRef.current = true;
+    });
+    const observer = new ResizeObserver(jump);
+    observer.observe(content);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
 
   const send = useCallback(async function send(message: string) {
@@ -157,11 +231,14 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
     const patch = (fn: (turn: Turn) => Turn) =>
       setTurns((t) => t.map((turn) => (turn.id === engineId ? fn(turn) : turn)));
 
+    /** Set when this question created its conversation; navigated to at the end. */
+    let created: string | null = null;
+
     try {
       const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, conversationId: currentIdRef.current }),
       });
 
       // 401 is the session ending, not an engine failure. Say so and offer the
@@ -198,7 +275,15 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
           const event = eventLine.slice(7).trim();
           const data = JSON.parse(dataLine.slice(6));
 
-          if (event === "delta") {
+          if (event === "conversation") {
+            // A conversation was created for this question. Adopt it now so a
+            // follow-up appends instead of creating another, but leave the URL
+            // alone until the stream ends: `/chat?c=` changes the page's key,
+            // which would remount this component and wipe the answer still
+            // being streamed into it.
+            currentIdRef.current = data.id;
+            created = data.id;
+          } else if (event === "delta") {
             patch((turn) => ({ ...turn, text: turn.text + data.text, progress: undefined }));
             scrollToEnd();
           } else if (event === "thinking") {
@@ -243,20 +328,27 @@ export function Chat({ initialTurns }: { initialTurns: ThreadTurn[] }) {
       patch((turn) => (turn.awaitingRows ? { ...turn, awaitingRows: false } : turn));
       setBusy(false);
       scrollToEnd();
+
+      // Safe here and not earlier: the route persists the exchange before it
+      // sends `done`, so the remount this triggers renders the same turns back
+      // from the server rather than losing them.
+      if (created) router.replace(`/chat?c=${created}`, { scroll: false });
     }
-  }, [busy, setInput, scrollToEnd]);
+  }, [busy, setInput, scrollToEnd, router]);
 
 
   return (
     <div className="flex h-full flex-col">
+      <ConversationSwitcher conversations={conversations} currentId={conversationId} />
       <div
+        ref={scrollerRef}
         className="flex-1 overflow-y-auto px-6 py-8"
         onScroll={(e) => {
           const el = e.currentTarget;
           pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        <div className="mx-auto max-w-3xl">
+        <div ref={contentRef} className="mx-auto max-w-3xl">
           {turns.length === 0 && <EmptyState onPick={send} />}
 
           <AnimatePresence initial={false}>
@@ -328,7 +420,9 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
             {turn.progress}
           </p>
         )}
-        {turn.text && <p className="prose-chat whitespace-pre-wrap text-body">{turn.text}</p>}
+        {/* Rendered, not printed: the engine writes light markdown, and as flat
+            text its **bold** reached the operator as literal asterisks. */}
+        {turn.text && <Prose text={turn.text} />}
         {!turn.text && !turn.progress && !turn.error && <p className="text-[13px] text-faint">…</p>}
         {turn.chart && <EngineChartBlock chart={turn.chart} />}
         {turn.awaitingRows && turn.text && <RowSkeleton />}

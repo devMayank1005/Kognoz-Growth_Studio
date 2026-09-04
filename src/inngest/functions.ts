@@ -4,7 +4,7 @@ import { db } from "@/db/client";
 import { loadDnc, loadPipeline, loadSignals, loadUniverse } from "@/db/queries";
 import { organization, settings } from "@/db/schema";
 import { persistSweep } from "@/db/sweeps";
-import { postBriefToOperators } from "@/db/threads";
+import { postBriefToOperators } from "@/db/conversations";
 import { rankTargets } from "@/domain/scoring";
 import { buildMorningBrief } from "@/engine/brief";
 import { logModelCall } from "@/engine/budget";

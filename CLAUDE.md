@@ -133,11 +133,33 @@ region-move plan: `docs/CLAIM-NEON.md`.
   would use. Do not describe this as two layers. Adding a second org REQUIRES doing RLS first:
   policies on all 12 org-scoped tables plus a NOBYPASSRLS application role.
 
+## Conversations
+
+`conversations` replaced the single `threads` row per user (2026-09-04). One row per named
+conversation, messages still a JSON blob — a conversation is always read and written whole, and the
+200-turn cap applies cleanly per conversation.
+
+- **Chat is the only per-user surface.** `src/db/conversations.ts` filters every query on `orgId`
+  **and** `userId`, so another operator's conversation id resolves to nothing rather than to their
+  chat. Pipeline, Today, dashboard, accounts and settings stay org-wide.
+- **`appendTurns` concatenates and trims inside one `UPDATE`.** The old `threads.appendTurns` read
+  the array into Node, appended, and wrote it back — a lost update whenever two requests finished
+  together. Verified: 20 concurrent appends, 20 turns land.
+- **The brief is a pinned `kind='brief'` conversation**, one per user, guaranteed by a partial
+  unique index on `(org_id, user_id) where kind = 'brief'` so the nightly job upserts instead of
+  select-then-write. It sorts first in the switcher and cannot be renamed or deleted — it is
+  rewritten every morning, so neither would stick.
+- **`threads` still exists, unused.** Migration `0004` copied every row across; leaving the table is
+  what makes that reversible. Dropping it is a separate step.
+- Server actions live in `src/app/actions/conversations.ts`. Only **delete** writes an audit row
+  (`conversation_deleted`): creating and renaming your own chat is not destructive, and a row per
+  "New conversation" click would bury the entries that matter.
+
 ## State that survives a refresh
 
 Two layers, deliberately separate:
 
-- **Server** — the chat thread. `api/chat/stream/route.ts` calls `appendTurns` when generation
+- **Server** — the chat conversation. `api/chat/stream/route.ts` calls `appendTurns` when generation
   completes, *before* the `done` frame and before closing, so an answer still lands in history if
   the operator refreshed or closed the tab mid-stream. That only works because `send()` swallows the
   "Controller is already closed" throw a disconnect causes: before that guard existed the throw

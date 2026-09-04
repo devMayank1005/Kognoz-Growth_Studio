@@ -7,7 +7,7 @@ const { organization } = await import("../src/db/schema");
 const { loadPipeline, loadSignals, loadUniverse } = await import("../src/db/queries");
 const { rankTargets } = await import("../src/domain/scoring");
 const { buildMorningBrief } = await import("../src/engine/brief");
-const { postBriefToOperators } = await import("../src/db/threads");
+const { postBriefToOperators } = await import("../src/db/conversations");
 
 const [org] = await db.select({ id: organization.id }).from(organization).limit(1);
 const [universe, signals, pipeline] = await Promise.all([loadUniverse(org.id), loadSignals(org.id), loadPipeline(org.id)]);

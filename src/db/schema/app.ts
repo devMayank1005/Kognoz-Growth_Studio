@@ -21,7 +21,7 @@
  * practice id as text.
  */
 
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -206,6 +206,10 @@ export const activityTypes = [
   "wedge_to_core",
   // A radar find that is wrong pollutes ranking forever unless it can be retired.
   "signal_dismissed",
+  // Deleting a conversation destroys history, so it is recorded. Creating and
+  // renaming one deliberately are not: they are not destructive, and a row per
+  // "New conversation" click would bury the entries that matter.
+  "conversation_deleted",
 ] as const;
 
 export const activities = pgTable(
@@ -250,6 +254,42 @@ export const insights = pgTable("insights", {
 });
 
 /** Chat history, one thread per user. */
+/**
+ * A named chat conversation, one row per conversation per user.
+ *
+ * Replaces the single rolling `threads` row per user. The messages stay a JSON
+ * blob rather than becoming their own table: it is how `threads` already worked,
+ * the 200-turn cap applies cleanly per conversation, and a conversation is
+ * always read and written whole.
+ *
+ * `kind` separates the operator's own conversations from the pinned one the
+ * scheduled brief writes into, so the morning brief is always in the same place
+ * and never lands in the middle of something being worked on.
+ */
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: text("org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    kind: text("kind", { enum: ["chat", "brief"] }).notNull().default("chat"),
+    messagesJson: jsonb("messages_json").$type<unknown[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    // The switcher's ordering.
+    index("conversations_owner_idx").on(t.orgId, t.userId, t.updatedAt),
+    // Exactly one brief conversation per user, so the nightly job can upsert
+    // instead of select-then-write. `threads` had no such constraint, which left
+    // a race that could silently lose turns.
+    uniqueIndex("conversations_one_brief_idx")
+      .on(t.orgId, t.userId)
+      .where(sql`kind = 'brief'`),
+  ],
+);
+
 export const threads = pgTable("threads", {
   id: uuid("id").defaultRandom().primaryKey(),
   orgId: text("org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
