@@ -11,3 +11,10 @@ export const inngest = new Inngest({
 });
 
 export const SWEEP_EVENT = "growth-studio/sweeps.requested" as const;
+
+/** A card was just created and should reach Zoho within seconds (§12 #6). */
+export const ZOHO_CREATE_EVENT = "growth-studio/zoho.create.requested" as const;
+/** A card changed. Debounced per card. */
+export const ZOHO_PUSH_EVENT = "growth-studio/zoho.push.requested" as const;
+/** "Push now" — everything pending, in one run. */
+export const ZOHO_SYNC_ALL_EVENT = "growth-studio/zoho.sync-all.requested" as const;

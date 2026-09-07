@@ -113,6 +113,15 @@ export interface PipelineCardRow {
   dispatchedAt: string;
   zohoSyncedAt: string;
   /**
+   * Set when Zoho refused the record for a reason a retry will not fix, and
+   * when the account is on the do-not-contact list (PRD §8). `syncStatusOf` has
+   * had `error` and `blocked` states all along; without these two columns they
+   * were unreachable, so a quarantined card rendered as an ordinary pending one
+   * and its push failed silently every night.
+   */
+  zohoSyncError: string;
+  zohoBlockedAt: string;
+  /**
    * ISO. Needed to know whether a synced card has since changed — the pending
    * count was `!zohoSyncedAt` alone, which reported an edited card as synced.
    */
@@ -153,6 +162,8 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
       signal: opportunities.signalCode,
       dispatchedAt: opportunities.dispatchedAt,
       zohoSyncedAt: opportunities.zohoSyncedAt,
+      zohoSyncError: opportunities.zohoSyncError,
+      zohoBlockedAt: opportunities.zohoBlockedAt,
       createdAt: opportunities.createdAt,
       updatedAt: opportunities.updatedAt,
     })
@@ -186,6 +197,8 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
     // would parse to NaN and silently drop the row from the partner-silence list.
     dispatchedAt: r.dispatchedAt ? r.dispatchedAt.toISOString().slice(0, 10) : "",
     zohoSyncedAt: r.zohoSyncedAt ? r.zohoSyncedAt.toISOString() : "",
+    zohoSyncError: r.zohoSyncError ?? "",
+    zohoBlockedAt: r.zohoBlockedAt ? r.zohoBlockedAt.toISOString() : "",
     updatedAt: r.updatedAt.toISOString(),
     contactName: r.contactName ?? "",
     contactTitle: r.contactTitle ?? "",

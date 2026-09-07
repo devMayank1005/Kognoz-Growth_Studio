@@ -1,0 +1,1 @@
+ALTER TABLE "settings" ADD COLUMN "zoho_dry_run" boolean DEFAULT true NOT NULL;

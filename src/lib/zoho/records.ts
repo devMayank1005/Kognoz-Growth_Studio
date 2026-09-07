@@ -76,3 +76,138 @@ export async function zohoGet<T>(
 
   return { ok: true, data: body as T };
 }
+
+/** Zoho wraps every write in `{ data: [...] }` and answers in kind. */
+interface ZohoWriteResponse {
+  data?: Array<{
+    code?: string;
+    status?: string;
+    message?: string;
+    details?: { id?: string; Modified_Time?: string };
+  }>;
+}
+
+export interface WrittenRecord {
+  id: string;
+  /** Present when Zoho reports it, which saves a re-read on the pull leg. */
+  modifiedTime: string | null;
+}
+
+async function write<T>(
+  method: "POST" | "PUT",
+  apiDomain: string,
+  path: string,
+  accessToken: string,
+  body: unknown,
+): Promise<ZohoResult<T>> {
+  const url = `${assertApiDomain(apiDomain)}/crm/v8${path}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { ok: false, error: { status: 0, code: "network", message: (err as Error).message } };
+  }
+
+  let parsed: unknown = null;
+  try {
+    parsed = await response.json();
+  } catch {
+    // Some failures answer with HTML, or nothing.
+  }
+
+  if (!response.ok) {
+    const obj = (parsed ?? {}) as Record<string, unknown>;
+    return {
+      ok: false,
+      error: {
+        status: response.status,
+        code: typeof obj.code === "string" ? obj.code : null,
+        // Zoho's own message ONLY. An INVALID_DATA response echoes the record
+        // back, and for a Contact that echo contains Email and Phone — §8
+        // applies to diagnostics too.
+        message: typeof obj.message === "string" ? obj.message : response.statusText,
+      },
+    };
+  }
+
+  return { ok: true, data: parsed as T };
+}
+
+/**
+ * Reads the per-record verdict out of a write response.
+ *
+ * Zoho returns **HTTP 200 with a per-record failure inside `data[]`** — a
+ * record refused for an unknown picklist value does not come back as a 4xx. A
+ * caller that only checked the status would record a successful push and store
+ * an id that does not exist.
+ */
+function firstRecord(body: ZohoWriteResponse): ZohoResult<WrittenRecord> {
+  const row = body.data?.[0];
+  if (!row) {
+    return { ok: false, error: { status: 200, code: "EMPTY_RESPONSE", message: "Zoho returned no record." } };
+  }
+  if (row.status !== "success" || !row.details?.id) {
+    return {
+      ok: false,
+      error: {
+        status: 200,
+        code: row.code ?? "WRITE_REFUSED",
+        message: row.message ?? "Zoho refused the record.",
+      },
+    };
+  }
+  return {
+    ok: true,
+    data: { id: row.details.id, modifiedTime: row.details.Modified_Time ?? null },
+  };
+}
+
+/** Creates one record. `module` is "Leads" or "Deals". */
+export async function createRecord(
+  apiDomain: string,
+  module: string,
+  accessToken: string,
+  payload: Record<string, unknown>,
+): Promise<ZohoResult<WrittenRecord>> {
+  const res = await write<ZohoWriteResponse>("POST", apiDomain, `/${module}`, accessToken, {
+    data: [payload],
+  });
+  return res.ok ? firstRecord(res.data) : res;
+}
+
+/**
+ * Updates one record we already own.
+ *
+ * `id` always comes from our own `zohoLeadId`/`zohoDealId` column — never from
+ * a search, never matched by name. That is the "only writes to records it
+ * created" invariant, and it is enforced by there being no other way to get an
+ * id into this function.
+ */
+export async function updateRecord(
+  apiDomain: string,
+  module: string,
+  id: string,
+  accessToken: string,
+  payload: Record<string, unknown>,
+): Promise<ZohoResult<WrittenRecord>> {
+  const res = await write<ZohoWriteResponse>("PUT", apiDomain, `/${module}/${id}`, accessToken, {
+    data: [payload],
+  });
+  return res.ok ? firstRecord(res.data) : res;
+}
+
+/*
+ * There is deliberately NO delete function in this module, and there never
+ * should be. The integration creates and updates; it does not remove. A bug
+ * cannot call what does not exist — the same structural argument as `people`
+ * having no email column.
+ */

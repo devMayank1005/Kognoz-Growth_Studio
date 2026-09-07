@@ -95,6 +95,16 @@ export const settings = pgTable("settings", {
    * overnight — which is the exact failure an override exists to prevent.
    */
   fxManualOverride: boolean("fx_manual_override").notNull().default(false),
+
+  /**
+   * While true, the push builds every payload and writes NOTHING.
+   *
+   * Defaults to **on**, deliberately. The target is a live CRM a team uses
+   * daily, so no deploy anywhere should be able to create records in it by
+   * accident; turning this off is a deliberate act in Settings, taken after
+   * someone has read what would land.
+   */
+  zohoDryRun: boolean("zoho_dry_run").notNull().default(true),
 });
 
 /** Region codes Zoho returns in the callback's `location` parameter. */
@@ -336,6 +346,21 @@ export const opportunities = pgTable(
     zohoLeadId: text("zoho_lead_id"),
     zohoDealId: text("zoho_deal_id"),
     zohoSyncedAt: timestamp("zoho_synced_at", { withTimezone: true }),
+
+    /**
+     * Zoho's `Modified_Time` as of the last time we looked — INCLUDING what it
+     * reported for our own push. Without that last part every push would bump
+     * it, and the next reconcile would read our own write back as a remote
+     * edit and flap the card forever.
+     */
+    zohoModifiedAt: timestamp("zoho_modified_at", { withTimezone: true }),
+
+    /** Why this card is not syncing. Redacted, and never an echoed record (§8). */
+    zohoSyncError: text("zoho_sync_error"),
+    /** Set when the card must NOT go: on the DNC list, or missing a named contact. */
+    zohoBlockedAt: timestamp("zoho_blocked_at", { withTimezone: true }),
+    /** Counted, so a permanently bad record stops burning API credit. */
+    zohoSyncAttempts: integer("zoho_sync_attempts").notNull().default(0),
   },
   (t) => [
     index("opportunities_org_stage_idx").on(t.orgId, t.stage),

@@ -12,6 +12,7 @@ import { industryOf } from "@/domain/industry";
 import { practiceByName } from "@/domain/practices";
 import { makeCard, type EngineRow } from "@/domain/routing";
 import { requireSession } from "@/lib/session";
+import { queueZohoPush } from "@/lib/zoho/notify";
 
 /**
  * Direct add (PRD §5) — the single path by which anything enters the pipeline.
@@ -183,6 +184,10 @@ export async function addCard(
   // nothing: the top bar, Pipeline, Today and Dashboard kept serving whatever
   // the router had cached, so the operator saw the write not happen. The shared
   // layout needs its own invalidation — soft navigation never refetches it.
+  // After the write, never before: a worker that reads mid-transaction sees the
+  // old row. Never throws — a queue outage must not fail the add (§12 #6).
+  await queueZohoPush(session.orgId, card.id, "created");
+
   revalidatePath("/pipeline");
   revalidatePath("/today");
   revalidatePath("/dashboard");

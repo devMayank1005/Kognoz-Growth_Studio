@@ -17,6 +17,7 @@ import { ThemeToggle } from "@/components/studio/theme-toggle";
 import { formatClock } from "@/lib/clock";
 import { cn } from "@/lib/cn";
 import { viewMoney, type MoneyView } from "@/domain/money";
+import { useZohoPush } from "@/components/studio/zoho-push";
 import { useWorkspace } from "@/store/selection";
 
 /* §2 — the rail. Order matters: it is the operator's daily loop, top to
@@ -160,17 +161,7 @@ export function TopBar({
       <Stat label="Due today" value={String(dueToday)} tone={dueToday > 0 ? "amber" : undefined} />
 
       <div className="ml-auto flex items-center gap-2">
-        {pendingZoho > 0 && (
-          <button
-            type="button"
-            disabled
-            title="Zoho is not connected yet"
-            aria-label={`${pendingZoho} cards waiting for Zoho — not connected yet`}
-            className="cursor-not-allowed rounded border border-line px-2.5 py-1 text-[13px] text-faint"
-          >
-            {pendingZoho} waiting for Zoho
-          </button>
-        )}
+        {pendingZoho > 0 && <ZohoChip pending={pendingZoho} />}
         <button
           type="button"
           onClick={toggleInspector}
@@ -328,3 +319,27 @@ export function StudioShell({
   );
 }
 
+/**
+ * The pending chip, which is now a control rather than a claim.
+ *
+ * It read `title="Zoho is not connected yet"` while permanently disabled. That
+ * could never be true: `pendingCount` returns 0 when the connection is missing,
+ * so the chip renders only once Zoho IS connected. It told the operator the
+ * opposite of the truth about why nothing was happening.
+ */
+function ZohoChip({ pending }: { pending: number }) {
+  const { busy, push } = useZohoPush(pending);
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void push()}
+      title={`${pending} card${pending === 1 ? " has" : "s have"} changed since their last push — click to push now`}
+      aria-label={`Push ${pending} changed cards to Zoho`}
+      className="rounded border border-line px-2.5 py-1 text-[13px] text-muted transition-colors duration-150 hover:bg-panel hover:text-body disabled:cursor-not-allowed disabled:text-faint"
+    >
+      {busy ? "Pushing…" : `${pending} waiting for Zoho`}
+    </button>
+  );
+}

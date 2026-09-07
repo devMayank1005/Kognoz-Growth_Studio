@@ -17,6 +17,7 @@ import {
 import { OUTCOMES, OUTCOME_LABELS, type Outcome } from "@/domain/outcomes";
 import { practiceById } from "@/domain/practices";
 import { TOUCH_CAP, defaultDraftKind } from "@/domain/touches";
+import { useZohoPush } from "@/components/studio/zoho-push";
 import { useSelection } from "@/store/selection";
 import { cn } from "@/lib/cn";
 import type { PipelineCardRow } from "@/db/queries";
@@ -137,13 +138,7 @@ function Snapshot({
           read "Push 0 to Zoho", which is worse.
         */}
         {zohoConnected ? (
-          <button
-            type="button"
-            disabled={pendingZoho === 0}
-            className="w-full rounded border border-line px-2.5 py-1.5 text-[13px] text-body transition-colors duration-150 hover:bg-panel disabled:cursor-not-allowed disabled:text-faint"
-          >
-            {pendingZoho > 0 ? `Push ${pendingZoho} to Zoho` : "Zoho up to date"}
-          </button>
+          <PushButton pending={pendingZoho} />
         ) : (
           <p className="text-[11px] text-faint">
             Zoho is not connected. Connect it in Settings to push the pipeline across.
@@ -532,6 +527,21 @@ function Action({ onClick, busy, primary, children }: { onClick: () => void; bus
       )}
     >
       {busy ? "…" : children}
+    </button>
+  );
+}
+
+function PushButton({ pending }: { pending: number }) {
+  const { busy, push } = useZohoPush(pending);
+
+  return (
+    <button
+      type="button"
+      disabled={busy || pending === 0}
+      onClick={() => void push()}
+      className="w-full rounded border border-line px-2.5 py-1.5 text-[13px] text-body transition-colors duration-150 hover:bg-panel disabled:cursor-not-allowed disabled:text-faint"
+    >
+      {busy ? "Pushing…" : pending > 0 ? `Push ${pending} to Zoho` : "Zoho up to date"}
     </button>
   );
 }

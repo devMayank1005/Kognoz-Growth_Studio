@@ -13,6 +13,7 @@ import { runSweep } from "@/engine/sweeps";
 import { makeRadar, makeSweeps } from "../../prompts/sweeps";
 
 import { SWEEP_EVENT, inngest } from "./client";
+import { zohoCreateCard, zohoPushCard, zohoSyncAll } from "./zoho";
 
 /**
  * The daily intelligence run (PRD §4.1).
@@ -150,4 +151,4 @@ export const dailySweep = inngest.createFunction(
   },
 );
 
-export const functions = [dailySweep];
+export const functions = [dailySweep, zohoCreateCard, zohoPushCard, zohoSyncAll];
