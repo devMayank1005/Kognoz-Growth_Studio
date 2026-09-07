@@ -95,7 +95,10 @@ export default async function StudioLayout({ children }: LayoutProps<"/">) {
           lastSweepAt={sweep.lastSweepAt}
           lastZohoSync={lastSyncedAt ? formatClock(lastSyncedAt) : undefined}
           zohoConnected={zohoConnected}
-          error={sweep.lastError ? "last sweep reported errors" : undefined}
+          // The warning already names what happened — the market that did not
+          // sweep, or that search was down. "last sweep reported errors" told
+          // the operator nothing they could act on, and said it all day.
+          error={sweep.lastError ?? undefined}
         />
       }
     >

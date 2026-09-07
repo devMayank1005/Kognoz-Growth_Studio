@@ -10,6 +10,7 @@ import { addCard } from "@/app/actions/add-card";
 import type { ConversationSummary, ConversationTurn } from "@/db/conversations";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
 import { formatCompact, type MoneyView } from "@/domain/money";
+import { formatStamp } from "@/lib/clock";
 import { runSweep } from "@/lib/run-sweep";
 import { useWorkspace } from "@/store/selection";
 
@@ -32,6 +33,12 @@ interface Turn {
   role: "user" | "engine";
   /** "brief" gets the §9.9 headline treatment; everything else is an answer. */
   kind?: "brief" | "answer";
+  /**
+   * When the turn was written. Optional because a turn created client-side
+   * mid-stream has none — and those are never briefs, which is the only place
+   * it is read.
+   */
+  at?: string;
   text: string;
   chart?: EngineChart | null;
   rows?: EngineRow[];
@@ -413,7 +420,23 @@ const TurnView = memo(function TurnView({ turn, money }: { turn: Turn; money: Mo
       {/* §9.5 — the cyan hairline marks this block as engine-authored. */}
       <div className="engine-mark">
         {turn.kind === "brief" && (
-          <p className="mb-1 font-display text-[13px] tracking-tight text-body">Morning brief</p>
+          <p className="mb-1 flex flex-wrap items-baseline gap-x-2 font-display text-[13px] tracking-tight text-body">
+            Morning brief
+            {/* The stamp answers the question the operator actually has: is
+                this today's? It reads ~06:00 rather than the 05:30 the cron
+                fires, because the brief is written after eleven model calls —
+                which is the more useful number: when the intelligence was
+                finished, not when the job was queued.
+
+                `formatStamp`, never toLocaleString. That is the function whose
+                absence produced a hydration mismatch which wiped the saved
+                theme off <html> on every load. */}
+            {turn.at && (
+              <span className="font-sans text-[11px] font-normal tracking-normal text-faint">
+                {formatStamp(turn.at)}
+              </span>
+            )}
+          </p>
         )}
         {/* Progress is the engine working, not its answer. It is replaced the
             moment real text arrives. */}

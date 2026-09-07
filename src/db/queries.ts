@@ -2,6 +2,8 @@ import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { accounts, activities, opportunities, partnerTowers, people, signals, sweepRuns, user } from "@/db/schema";
+import { summariseLatest, sweepWarning } from "@/domain/sweep-status";
+import { IST_OFFSET_MINUTES } from "@/lib/clock";
 import type { SweepItem, UniverseAccount } from "@/domain/scoring";
 import type { TowerKey } from "@/domain/revenue";
 import { TOWER_KEYS } from "@/domain/practices";
@@ -233,16 +235,44 @@ export interface SweepStatus {
   /** Live signals dated today. */
   triggersToday: number;
   lastSweepAt: string | null;
+  /**
+   * A warning about the MOST RECENT run, or null when it was healthy.
+   *
+   * Not "did anything go wrong today" — that is what it used to be, and a
+   * single transient failure at dawn then described the machine for the rest
+   * of the day even after a clean run.
+   */
   lastError: string | null;
+  /** Markets in the latest run, and how many found something. */
+  marketsSwept: number;
+  itemsFound: number;
+  /** Findings refused in the latest run. Not an error. */
+  droppedCount: number;
 }
 
 /** Feeds the status line (PRD §2): what the machine is doing, always visible. */
 export async function loadSweepStatus(orgId: string): Promise<SweepStatus> {
-  const since = new Date();
-  since.setUTCHours(0, 0, 0, 0);
+  /**
+   * Midnight in IST, not UTC.
+   *
+   * The cron fires at 05:30 Asia/Kolkata, which is 00:00:00 UTC exactly — so a
+   * UTC boundary sat on the very instant the sweep starts, and a run beginning
+   * a second early landed on yesterday and left the strip reading "No sweep yet
+   * today".
+   */
+  const nowIst = new Date(Date.now() + IST_OFFSET_MINUTES * 60_000);
+  nowIst.setUTCHours(0, 0, 0, 0);
+  const since = new Date(nowIst.getTime() - IST_OFFSET_MINUTES * 60_000);
 
   const runs = await db
-    .select({ startedAt: sweepRuns.startedAt, errors: sweepRuns.errors, itemsFound: sweepRuns.itemsFound })
+    .select({
+      startedAt: sweepRuns.startedAt,
+      market: sweepRuns.market,
+      itemsFound: sweepRuns.itemsFound,
+      errors: sweepRuns.errors,
+      dropped: sweepRuns.dropped,
+      webSearchDegraded: sweepRuns.webSearchDegraded,
+    })
     .from(sweepRuns)
     .where(and(eq(sweepRuns.orgId, orgId), gte(sweepRuns.startedAt, since)))
     .orderBy(desc(sweepRuns.startedAt));
@@ -252,12 +282,18 @@ export async function loadSweepStatus(orgId: string): Promise<SweepStatus> {
     .from(signals)
     .where(and(eq(signals.orgId, orgId), eq(signals.date, new Date().toISOString().slice(0, 10))));
 
-  const failed = runs.find((r) => r.errors);
+  // Judged in `src/domain/sweep-status.ts`, which is pure and tested — the
+  // arithmetic here is exactly where the false alarm lived.
+  const summary = summariseLatest(runs);
+
   return {
     doneToday: runs.length,
     triggersToday: trig?.n ?? 0,
     lastSweepAt: runs[0]?.startedAt ? runs[0].startedAt.toISOString() : null,
-    lastError: failed?.errors ?? null,
+    lastError: sweepWarning(summary),
+    marketsSwept: summary.markets,
+    itemsFound: summary.itemsFound,
+    droppedCount: summary.droppedCount,
   };
 }
 

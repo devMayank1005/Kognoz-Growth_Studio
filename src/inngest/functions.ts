@@ -60,10 +60,25 @@ export const dailySweep = inngest.createFunction(
      * `convertAmount` refuses once that age passes three days.
      */
     await step.run("refresh-fx", async () => {
-      const { refreshFxRate } = await import("@/lib/fx");
-      const result = await refreshFxRate(org.id);
-      console.log(`[fx] ${result.status}${result.rate ? ` USD->INR ${result.rate}` : ""}`);
-      return result;
+      /**
+       * Guarded, because the comment above has to be true.
+       *
+       * `refreshFxRate` swallows a failed FETCH, but its two database writes
+       * are unguarded — and a Neon hiccup there would throw out of this step
+       * and, with `retries: 1`, kill the whole job BEFORE a single sweep ran.
+       * A rate that could not be refreshed is not a reason to skip the
+       * morning's intelligence: `convertAmount` already refuses on a stale
+       * rate, so nothing downstream trusts it blindly.
+       */
+      try {
+        const { refreshFxRate } = await import("@/lib/fx");
+        const result = await refreshFxRate(org.id);
+        console.log(`[fx] ${result.status}${result.rate ? ` USD->INR ${result.rate}` : ""}`);
+        return result;
+      } catch (err) {
+        console.error(`[fx] refresh failed, continuing: ${(err as Error).message}`);
+        return { status: "unavailable" as const };
+      }
     });
 
     const plan = await step.run("plan-sweeps", async () => {

@@ -22,6 +22,19 @@ export interface PersistResult {
 }
 
 export async function persistSweep(orgId: string, outcome: SweepOutcome): Promise<PersistResult> {
+  /**
+   * Both ends of the run, from data we already had.
+   *
+   * `startedAt` used to be the column's `defaultNow()` — the Postgres clock at
+   * INSERT, which is when the sweep *finished*, not when it started. Combined
+   * with a `finishedAt` captured in JS a few milliseconds earlier, every one of
+   * the 57 rows written so far has `finished_at` BEFORE `started_at`, and the
+   * duration of a sweep was unrecoverable. `latencyMs` was on the outcome the
+   * whole time.
+   */
+  const finishedAt = new Date();
+  const startedAt = new Date(finishedAt.getTime() - outcome.latencyMs);
+
   const [run] = await db
     .insert(sweepRuns)
     .values({
@@ -29,11 +42,14 @@ export async function persistSweep(orgId: string, outcome: SweepOutcome): Promis
       kind: outcome.kind,
       market: outcome.market ?? outcome.title,
       itemsFound: outcome.items.length,
-      finishedAt: new Date(),
-      // Both the hard failure and the individually rejected findings are
-      // recorded. A sweep that returned six findings and stored none is not a
-      // success, and the operator should be able to see why.
-      errors: [outcome.error, ...outcome.dropped].filter(Boolean).join(" | ") || null,
+      startedAt,
+      finishedAt,
+      // A hard failure ONLY. These two used to share a column, so a sweep that
+      // found six, kept four and refused two was reported as an error — and one
+      // such row made the status line claim failure for the rest of the day.
+      errors: outcome.error ?? null,
+      dropped: outcome.dropped.length ? outcome.dropped.join(" | ") : null,
+      webSearchDegraded: outcome.webSearchDegraded ?? false,
     })
     .returning({ id: sweepRuns.id });
 

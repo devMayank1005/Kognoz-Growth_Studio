@@ -1,7 +1,7 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 import { SWEEP_SYS, type SweepDefinition } from "../../prompts/sweeps";
-import { PROSE_MODEL, WEB_SEARCH_TOOL, client, readUsage, type UsageReport } from "./client";
+import { PROSE_MODEL, WEB_SEARCH_TOOL, client, readUsage, webSearchError, type UsageReport } from "./client";
 import { cleanSweepItems, sweepResultSchema, type CleanSweepItem } from "./sweep-schema";
 
 /**
@@ -22,6 +22,14 @@ export interface SweepOutcome {
   /** Findings the model returned that we refused to store, with reasons. */
   dropped: string[];
   error?: string;
+  /**
+   * Anthropic's web search failed inside a call that still returned HTTP 200.
+   *
+   * Not an error — the sweep produced findings. But it produced them from the
+   * model's memory rather than the live web, which is exactly why the URLs on
+   * such a run look stale or invented.
+   */
+  webSearchDegraded?: boolean;
   usage?: UsageReport;
   latencyMs: number;
 }
@@ -46,10 +54,25 @@ export async function runSweep(sweep: SweepDefinition, now: Date = new Date()): 
       const parsed = response.parsed_output;
       if (!parsed) throw new Error("sweep returned no parseable output");
 
+      /**
+       * A failed web search does NOT throw — it comes back inside a 200 as an
+       * error object in `web_search_tool_result` (CLAUDE.md). The chat route
+       * has always checked for this; the sweep never did, so a degraded search
+       * looked like a perfectly healthy run that happened to return findings
+       * the model remembered rather than looked up.
+       */
+      const searchError = Array.isArray(response.content)
+        ? response.content.map(webSearchError).find(Boolean)
+        : null;
+      if (searchError) {
+        console.warn(`[sweep] ${sweep.id}: web search unavailable (${searchError})`);
+      }
+
       const { items, dropped } = cleanSweepItems(parsed.items, now);
       return {
         id: sweep.id, title: sweep.title, kind: sweep.kind, market: sweep.market,
         items, dropped,
+        webSearchDegraded: Boolean(searchError),
         usage: readUsage(response.usage),
         latencyMs: Date.now() - started,
       };

@@ -31,3 +31,40 @@ export function formatClock(
   const minutes = String(shifted.getUTCMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
 }
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+] as const;
+
+/**
+ * `Sunday 7 September` for the given instant.
+ *
+ * Same discipline as `formatClock` and for the same reason: no `Intl`, no
+ * `toLocaleDateString`, no host timezone. Pure arithmetic on the UTC timestamp,
+ * so the server and the browser produce byte-identical text and React has
+ * nothing to call a hydration mismatch.
+ */
+export function formatDay(
+  iso: string | null | undefined,
+  offsetMinutes: number = IST_OFFSET_MINUTES,
+): string {
+  if (!iso) return "";
+
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+
+  const shifted = new Date(ms + offsetMinutes * 60_000);
+  return `${DAYS[shifted.getUTCDay()]} ${shifted.getUTCDate()} ${MONTHS[shifted.getUTCMonth()]}`;
+}
+
+/** `Sunday 7 September, 06:04 IST` — the whole stamp, in one call. */
+export function formatStamp(
+  iso: string | null | undefined,
+  offsetMinutes: number = IST_OFFSET_MINUTES,
+): string {
+  const day = formatDay(iso, offsetMinutes);
+  if (!day) return "";
+  return `${day}, ${formatClock(iso, offsetMinutes)} IST`;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatClock, IST_OFFSET_MINUTES } from "./clock";
+import { IST_OFFSET_MINUTES, formatClock, formatDay, formatStamp } from "./clock";
 
 describe("formatClock", () => {
   /**
@@ -41,5 +41,40 @@ describe("formatClock", () => {
   it("is stable across repeated calls", () => {
     const iso = "2026-09-04T06:00:00.000Z";
     expect(formatClock(iso)).toBe(formatClock(iso));
+  });
+});
+
+describe("formatDay and formatStamp", () => {
+  // 06:04 IST on Monday 7 September 2026 is 00:34 UTC the same day.
+  const brief = "2026-09-07T00:34:00.000Z";
+
+  it("names the day and month in IST, not UTC", () => {
+    expect(formatDay(brief)).toBe("Monday 7 September");
+    expect(formatStamp(brief)).toBe("Monday 7 September, 06:04 IST");
+  });
+
+  /**
+   * The reason this exists rather than toLocaleDateString: the server runs UTC
+   * on Vercel and the browser runs IST, and the mismatch made React regenerate
+   * the tree and wipe the saved theme off <html>. Byte-identical output is the
+   * whole requirement.
+   */
+  it("crosses the date line into IST correctly", () => {
+    // 20:00 UTC is already the NEXT day in India.
+    expect(formatDay("2026-09-06T20:00:00.000Z")).toBe("Monday 7 September");
+    expect(formatClock("2026-09-06T20:00:00.000Z")).toBe("01:30");
+  });
+
+  it("returns empty for nothing, rather than a broken date", () => {
+    for (const bad of [null, undefined, "", "not a date"]) {
+      expect(formatDay(bad), String(bad)).toBe("");
+      expect(formatStamp(bad), String(bad)).toBe("");
+    }
+  });
+
+  it("is byte-identical whatever the host timezone", () => {
+    // No Intl and no host lookup means there is nothing to vary.
+    expect(formatStamp(brief)).toBe(formatStamp(brief));
+    expect(formatDay(brief)).not.toMatch(/undefined|NaN|Invalid/);
   });
 });

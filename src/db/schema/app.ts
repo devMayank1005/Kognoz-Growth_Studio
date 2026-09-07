@@ -261,7 +261,36 @@ export const sweepRuns = pgTable("sweep_runs", {
   kind: text("kind", { enum: ["standard", "radar"] }).notNull(),
   market: text("market"),
   itemsFound: integer("items_found").notNull().default(0),
+
+  /**
+   * A HARD failure only — the sweep did not run.
+   *
+   * This used to also carry the findings we deliberately refused to store, so
+   * a sweep that found six, kept four and rejected two wrote a non-null
+   * `errors` and was reported as a failure. It was doing its job. There was
+   * nowhere else to say so; now there is.
+   */
   errors: text("errors"),
+
+  /**
+   * Findings the model returned that we declined to store, and why — an
+   * unknown signal code, a date in the future, no usable source URL.
+   *
+   * Worth keeping and worth showing, but it is not a failure.
+   */
+  dropped: text("dropped"),
+
+  /**
+   * Set when Anthropic's web search failed inside a call that still returned
+   * HTTP 200 (CLAUDE.md: the error arrives as an object inside
+   * `web_search_tool_result`, it does not throw).
+   *
+   * Not a failure either: the sweep produced findings. But it produced them
+   * from the model's memory rather than the live web, which is why the URLs
+   * look stale — and without this column there was no way to know that had
+   * happened.
+   */
+  webSearchDegraded: boolean("web_search_degraded").notNull().default(false),
 });
 
 /* --------------------------------------------------------- opportunities */
