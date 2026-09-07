@@ -39,18 +39,39 @@ const MARKET_ALIASES: ReadonlyArray<readonly [string, RegExp]> = [
  */
 const NOT_A_COMPANY = /^(a|an|the|more|some|another|that|this|it|them|these|those|his|her|their|my|our)\b/i;
 
-/** "300K" · "$1.5M" · "75,000" → a number of dollars. */
+/**
+ * "3cr" · "50L" · "₹75,00,000" · "300K" → a plain amount.
+ *
+ * Lakh and crore were missing, so `add NEOM at 5cr` did not parse at all while
+ * `add NEOM at 500k` quietly meant five lakh. `k` and `m` deliberately keep
+ * meaning thousand and million rather than being reinterpreted: silently
+ * changing what a suffix means is the invisible mispricing this codebase keeps
+ * having to design around, and the add path already toasts the parsed figure
+ * back so a wrong guess is visible and correctable.
+ */
 export function parseMoney(raw: string): number | undefined {
-  const s = raw.trim().replace(/[$,\s]/g, "");
+  const s = raw.trim().replace(/[$₹,\s]/g, "");
   if (!s) return undefined;
-  const m = /^(\d+(?:\.\d+)?)([kKmM])?$/.exec(s);
+  const m = /^(\d+(?:\.\d+)?)(cr|crore|l|lakh|lac|k|m)?$/i.exec(s);
   if (!m) return undefined;
   const n = Number(m[1]);
   if (!Number.isFinite(n)) return undefined;
-  const suffix = m[2]?.toLowerCase();
-  if (suffix === "k") return Math.round(n * 1_000);
-  if (suffix === "m") return Math.round(n * 1_000_000);
-  return Math.round(n);
+
+  switch (m[2]?.toLowerCase()) {
+    case "cr":
+    case "crore":
+      return Math.round(n * 10_000_000);
+    case "l":
+    case "lakh":
+    case "lac":
+      return Math.round(n * 100_000);
+    case "k":
+      return Math.round(n * 1_000);
+    case "m":
+      return Math.round(n * 1_000_000);
+    default:
+      return Math.round(n);
+  }
 }
 
 export function matchIntent(query: string): Intent | null {

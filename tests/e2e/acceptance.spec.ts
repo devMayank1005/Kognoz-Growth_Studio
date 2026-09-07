@@ -27,7 +27,10 @@ test.describe("acceptance #7 — the dashboard reconciles and filters", () => {
   test("every panel totals the same as the open pipeline", async ({ page }) => {
     await page.goto("/dashboard");
     const note = await page.getByText(/Every panel totals/).textContent();
-    const total = note?.match(/\$[\d.]+[KM]/)?.[0];
+    // Matches either denomination: dollars in K/M, rupees in L/Cr. Pinned to
+    // `$` alone, this returned undefined the moment the programme moved to
+    // rupees and the assertion below failed for the wrong reason.
+    const total = note?.match(/[$₹][\d,.]+(?:Cr|L|K|M)?/)?.[0];
     expect(total, "the dashboard states its total").toBeTruthy();
 
     // Each panel heading carries its own sum; all must equal that total.

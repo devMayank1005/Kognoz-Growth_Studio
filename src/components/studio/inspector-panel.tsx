@@ -14,6 +14,7 @@ import {
   setCardValue,
   type CardPatch,
 } from "@/app/actions/card-actions";
+import { entryUnit, fromEntry, toEntry } from "@/domain/money";
 import { OUTCOMES, OUTCOME_LABELS, type Outcome } from "@/domain/outcomes";
 import { practiceById } from "@/domain/practices";
 import { TOUCH_CAP, defaultDraftKind } from "@/domain/touches";
@@ -426,14 +427,15 @@ function ValueField({
   onSaved: (patch: Partial<CardPatch>) => void;
   money: MoneyView;
 }) {
+  const unit = entryUnit(money.base);
   const [editing, setEditing] = useState(false);
-  const [thousands, setThousands] = useState(String(Math.round(card.value / 1000)));
+  const [entered, setEntered] = useState(String(toEntry(card.value, money.base)));
   const [busy, setBusy] = useState(false);
   const [tier, setTier] = useState(card.tier);
   const [value, setValue] = useState(card.value);
 
   async function save() {
-    const next = Number(thousands) * 1000;
+    const next = fromEntry(Number(entered), money.base);
     if (!Number.isFinite(next) || next < 0) return toast.error("Value must be a number.");
     if (next === value) return setEditing(false);
 
@@ -477,20 +479,20 @@ function ValueField({
     <div className="flex items-baseline gap-2">
       <dt className="w-24 shrink-0 text-[11px] text-faint">Value</dt>
       <dd className="flex flex-1 items-center gap-1">
-        <span className="text-[13px] text-faint">$</span>
+        <span className="text-[13px] text-faint">{unit.symbol}</span>
         <input
           autoFocus
-          value={thousands}
+          value={entered}
           inputMode="numeric"
-          onChange={(e) => setThousands(e.target.value.replace(/[^0-9]/g, ""))}
+          onChange={(e) => setEntered(e.target.value.replace(/[^0-9]/g, ""))}
           onKeyDown={(e) => {
             if (e.key === "Enter") void save();
             if (e.key === "Escape") setEditing(false);
           }}
           className="num w-20 rounded border border-line bg-canvas px-1.5 py-0.5 text-[13px] text-body"
-          aria-label="Value in thousands"
+          aria-label={`Value in ${money.base === "INR" ? "lakh" : "thousands"}`}
         />
-        <span className="text-[13px] text-faint">K</span>
+        <span className="text-[13px] text-faint">{unit.label}</span>
       </dd>
       <button
         type="button"

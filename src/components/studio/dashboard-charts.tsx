@@ -27,7 +27,16 @@ export function PanelChart({
         <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
           <CartesianGrid stroke="var(--gs-border)" vertical={false} />
           <XAxis dataKey="name" tick={axis} tickLine={false} axisLine={false} interval={0} />
-          <YAxis tick={axis} tickLine={false} axisLine={false} />
+          {/* The curve chart below has always formatted its axis; this one did
+              not, so the ticks were raw integers clipped to "00000" by the
+              default axis width. */}
+          <YAxis
+            tick={axis}
+            tickLine={false}
+            axisLine={false}
+            width={58}
+            tickFormatter={(v: number) => viewMoney(v, money)}
+          />
           <Tooltip cursor={{ fill: "var(--gs-panel)" }} contentStyle={tooltip} formatter={(v) => [viewMoney(Number(v ?? 0), money), "value"]} />
           <Bar dataKey="value" fill="var(--gs-signal)" radius={[2, 2, 0, 0]} isAnimationActive={false} />
         </BarChart>

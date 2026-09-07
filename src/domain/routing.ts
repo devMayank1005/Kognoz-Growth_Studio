@@ -21,10 +21,25 @@ export const STAGES = [
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
-/** Tier thresholds (PRD §5): wedge < $250K ≤ core < $500K ≤ whale. */
-export const TIER_VALUE = { wedge: 75_000, core: 300_000, whale: 500_000 } as const;
-export const CORE_FLOOR = 250_000;
-export const WHALE_FLOOR = 500_000;
+/**
+ * Tier thresholds (PRD §5): wedge < ₹2.5Cr ≤ core < ₹5Cr ≤ whale.
+ *
+ * **Rupees. Do not convert them again** — see the header of `revenue.ts` and
+ * `REDENOMINATION`. A floor that moves re-tiers live cards, and `tier` is a
+ * stored column, so the stored value and the derived one would then disagree.
+ */
+export const TIER_VALUE = { wedge: 7_500_000, core: 30_000_000, whale: 50_000_000 } as const;
+export const CORE_FLOOR = 25_000_000;
+export const WHALE_FLOOR = 50_000_000;
+
+/**
+ * The largest value that can be typed on a card: ₹1000Cr.
+ *
+ * Was a bare `100_000_000` inside `setCardValue` with a "$100M" message beside
+ * it. Left alone it would have become a ₹10Cr cap — roughly $1.1M — and started
+ * refusing perfectly ordinary whale deals.
+ */
+export const VALUE_CAP = 10_000_000_000;
 export type Tier = "wedge" | "core" | "whale";
 
 /** A row as the engine emits it. Deliberately carries no personal contact fields. */

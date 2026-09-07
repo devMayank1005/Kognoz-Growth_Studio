@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { addCard } from "@/app/actions/add-card";
 import type { ConversationSummary, ConversationTurn } from "@/db/conversations";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
-import { formatCompact, type MoneyView } from "@/domain/money";
+import { viewMoney, type MoneyView } from "@/domain/money";
 import { formatStamp } from "@/lib/clock";
 import { runSweep } from "@/lib/run-sweep";
 import { useWorkspace } from "@/store/selection";
@@ -50,8 +50,11 @@ interface Turn {
   source?: "local" | "engine";
 }
 
-/** `add Emaar for Hire at 300K` — a direct action, not a chat answer. */
-async function runAddIntent(action: { company: string; solution?: string; value?: number }): Promise<string> {
+/** `add Emaar for Hire at 3cr` — a direct action, not a chat answer. */
+async function runAddIntent(
+  action: { company: string; solution?: string; value?: number },
+  money: MoneyView,
+): Promise<string> {
   const result = await addCard(
     {
       company: action.company,
@@ -70,7 +73,7 @@ async function runAddIntent(action: { company: string; solution?: string; value?
   );
 
   if (result.ok) {
-    const summary = `${result.practice} · ${result.tower} · ${result.partner} · ${formatCompact(result.value, "USD")} · Tagged`;
+    const summary = `${result.practice} · ${result.tower} · ${result.partner} · ${viewMoney(result.value, money)} · Tagged`;
     toast.success(`${result.account} added`, { description: summary });
     return `Added ${result.account} — ${summary}.`;
   }
@@ -308,7 +311,7 @@ export function Chat({
               // A direct action, not a question. The turn reports what it did
               // rather than sitting on an empty "…" bubble.
               patch((turn) => ({ ...turn, awaitingRows: false, text: `Adding ${data.action.company}…` }));
-              void runAddIntent(data.action).then((line) =>
+              void runAddIntent(data.action, money).then((line) =>
                 patch((turn) => ({ ...turn, text: line })),
               );
             } else if (data.action?.kind === "sweep") {
@@ -344,7 +347,7 @@ export function Chat({
       // from the server rather than losing them.
       if (created) router.replace(`/chat?c=${created}`, { scroll: false });
     }
-  }, [busy, setInput, scrollToEnd, router]);
+  }, [busy, setInput, scrollToEnd, router, money]);
 
 
   return (
@@ -382,7 +385,7 @@ export function Chat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={busy}
-            placeholder="Ask the engine, or type: add Emaar for Hire at 300K"
+            placeholder={`Ask the engine, or type: add Emaar for Hire at ${money.base === "INR" ? "3cr" : "300K"}`}
             aria-label="Ask the engine"
             className="flex-1 rounded border border-line bg-canvas px-3 py-2 text-[13px] text-body placeholder:text-faint disabled:opacity-60"
           />
@@ -450,7 +453,7 @@ const TurnView = memo(function TurnView({ turn, money }: { turn: Turn; money: Mo
             text its **bold** reached the operator as literal asterisks. */}
         {turn.text && <Prose text={turn.text} />}
         {!turn.text && !turn.progress && !turn.error && <p className="text-[13px] text-faint">…</p>}
-        {turn.chart && <EngineChartBlock chart={turn.chart} />}
+        {turn.chart && <EngineChartBlock chart={turn.chart} money={money} />}
         {turn.awaitingRows && turn.text && <RowSkeleton />}
         {turn.rows && turn.rows.length > 0 && <ActionTable rows={turn.rows} money={money} />}
         {turn.error && <p className="mt-2 text-[13px] text-amber">{turn.error}</p>}

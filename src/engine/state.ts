@@ -1,5 +1,5 @@
 import type { Target } from "@/domain/scoring";
-import { viewMoney, type Currency, type FxRate, type MoneyView } from "@/domain/money";
+import { effectiveCurrency, viewMoney, type Currency, type FxRate, type MoneyView } from "@/domain/money";
 
 /**
  * The live-state block that follows the frozen system prompt.
@@ -100,10 +100,26 @@ function money(input: BuildStateInput, value: number): string {
 export function buildLiveState(input: BuildStateInput): string {
   const asOf = bucketTime(input.now).toISOString().slice(0, 16).replace("T", " ");
 
+  /**
+   * The currency actually rendered above, not the one requested.
+   *
+   * `money()` below converts with `viewMoney`, which falls back to the base
+   * currency when the rate is stale. Naming the requested currency here would
+   * label rupee figures as dollars in the one block the model trusts.
+   */
+  const shown = effectiveCurrency(
+    {
+      base: input.baseCurrency ?? "USD",
+      display: input.displayCurrency ?? "USD",
+      rate: input.fxRate ?? null,
+    },
+    input.now ?? new Date(),
+  );
+
   return `LIVE STATE (as of ${asOf} UTC)
 
 PROGRAMME: month ${input.programMonth} of 18 · open pipeline ${money(input, input.pipelineValue)} · closed ${money(input, input.closedValue)} · target ${money(input, input.target)}
-CURRENCY: write money in ${input.displayCurrency ?? "USD"}. The figures above are already in it.
+CURRENCY: write money in ${shown}. The figures above are already in it. Any "value" you emit is a plain integer in ${shown}, digits only.
 
 PARTNERS BY TOWER: ${Object.entries(input.partnersByTower).map(([t, p]) => `${t}=${p}`).join(" · ")}
 

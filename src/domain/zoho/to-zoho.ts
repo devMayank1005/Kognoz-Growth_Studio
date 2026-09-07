@@ -6,7 +6,7 @@
  * looks wrong in Zoho.
  */
 
-import { convertAmount, type Currency, type FxRate } from "../money";
+import { convertAmount, formatCompact, type Currency, type FxRate } from "../money";
 import type { Stage } from "../routing";
 import {
   DEAL_NAME_MAX,
@@ -114,14 +114,19 @@ const pack = (parts: (string | number | null | undefined)[]): string =>
     .filter((p) => p.length > 0)
     .join(" · ");
 
-const usd = (value: number): string => `$${Math.round(value / 1000)}K`;
-
-/** PRD §6: "solution · trigger · value · tower · partner". */
-export function packLeadDescription(card: SyncCard): string {
+/**
+ * PRD §6: "solution · trigger · value · tower · partner".
+ *
+ * The value went in through a private `$${n/1000}K` helper, so a Lead created
+ * from a rupee pipeline carried a dollar figure in its Description — inside the
+ * client's own CRM, where nobody would think to question it. `formatCompact`
+ * is the one formatter, and it already knows lakh and crore.
+ */
+export function packLeadDescription(card: SyncCard, currency: Currency = "USD"): string {
   return pack([
     card.practiceName,
     card.evidence || card.signalCode,
-    usd(card.value),
+    formatCompact(card.value, currency),
     card.tower,
     card.partner,
   ]);
@@ -140,7 +145,11 @@ export function packDealDescription(card: SyncCard): string {
   ]);
 }
 
-export function toLead(card: SyncCard, leadSource = LEAD_SOURCE): ZohoLeadPayload {
+export function toLead(
+  card: SyncCard,
+  leadSource = LEAD_SOURCE,
+  currency: Currency = "USD",
+): ZohoLeadPayload {
   // A role is a job title we are aiming at, never a person — so it may fill
   // Designation but must never become a name.
   const name = card.contact ? splitPersonName(card.contact.name) : { last: NO_NAMED_CONTACT };
@@ -149,7 +158,7 @@ export function toLead(card: SyncCard, leadSource = LEAD_SOURCE): ZohoLeadPayloa
     Company: card.account,
     Last_Name: name.last,
     Lead_Source: leadSource,
-    Description: packLeadDescription(card),
+    Description: packLeadDescription(card, currency),
   };
   if (name.first) payload.First_Name = name.first;
 

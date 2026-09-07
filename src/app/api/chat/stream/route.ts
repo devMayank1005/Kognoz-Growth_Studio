@@ -163,7 +163,7 @@ export async function POST(request: Request) {
         const intent = matchIntent(message);
         if (intent && intent.kind !== "add" && intent.kind !== "sweep") {
           send("state", { source: "local", intent: intent.kind });
-          const local = answerLocally(intent, { targets, pipeline, programMonth, openValue, closedValue });
+          const local = answerLocally(intent, { targets, pipeline, programMonth, openValue, closedValue, money });
           send("delta", { text: local.text });
           send("rows", { chart: local.chart, rows: local.rows });
           send("done", { source: "local" });
@@ -343,8 +343,9 @@ import type { Intent } from "@/engine/local";
 import type { Target } from "@/domain/scoring";
 import type { PipelineCardRow } from "@/db/queries";
 import { practiceById, practiceForTarget } from "@/domain/practices";
+import { TIER_VALUE } from "@/domain/routing";
+import { viewMoney, type MoneyView } from "@/domain/money";
 
-const fmtM = (n: number) => `$${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
 
 function rowFromTarget(t: Target) {
   // See brief.ts — AMS is routed by age, not by signal order.
@@ -358,7 +359,9 @@ function rowFromTarget(t: Target) {
     industry: t.industry,
     trigger: t.evidence,
     signal: t.signal,
-    value: 300_000,
+    // Was a hardcoded 300_000. The default lives in one place, and it is the
+    // one that moves when the tiers are re-priced.
+    value: TIER_VALUE.core,
     url: t.url,
   };
 }
@@ -372,8 +375,17 @@ type AnswerableIntent = Extract<Intent, { kind: "pipeline" | "due" | "openFirst"
 
 function answerLocally(
   intent: AnswerableIntent,
-  ctx: { targets: Target[]; pipeline: PipelineCardRow[]; programMonth: number; openValue: number; closedValue: number },
+  ctx: {
+    targets: Target[];
+    pipeline: PipelineCardRow[];
+    programMonth: number;
+    openValue: number;
+    closedValue: number;
+    /** The chat prose must agree with the screen it is answering about. */
+    money: MoneyView;
+  },
 ) {
+  const fmt = (n: number) => viewMoney(n, ctx.money);
   const active = ctx.pipeline.filter((c) => !["Won", "Lost"].includes(c.stage));
   const pace = curveTarget(ctx.programMonth);
 
@@ -387,12 +399,21 @@ function answerLocally(
     for (const c of active) {
       const raw = String(c[key as keyof PipelineCardRow] ?? "—");
       const label = key === "practiceId" ? (practiceById(raw)?.name ?? raw) : raw;
-      grouped[label] = (grouped[label] ?? 0) + Math.round(c.value / 1000);
+      grouped[label] = (grouped[label] ?? 0) + c.value;
     }
     return {
-      text: `Month ${ctx.programMonth} of 18. Live pipeline ${fmtM(ctx.openValue)} across ${active.length} opportunit${active.length === 1 ? "y" : "ies"}; closed ${fmtM(ctx.closedValue)} against a pace of ${fmtM(pace)} — ${ctx.closedValue >= pace ? "on the curve" : `behind by ${fmtM(pace - ctx.closedValue)}; the curve back-loads, so build now`}.`,
+      text: `Month ${ctx.programMonth} of 18. Live pipeline ${fmt(ctx.openValue)} across ${active.length} opportunit${active.length === 1 ? "y" : "ies"}; closed ${fmt(ctx.closedValue)} against a pace of ${fmt(pace)} — ${ctx.closedValue >= pace ? "on the curve" : `behind by ${fmt(pace - ctx.closedValue)}; the curve back-loads, so build now`}.`,
       chart: Object.keys(grouped).length
-        ? { type: "bar" as const, title: `Pipeline by ${intent.groupBy ?? "stage"} ($K)`, data: Object.entries(grouped).map(([name, value]) => ({ name, value })) }
+        ? {
+            type: "bar" as const,
+            // The title said "($K)" and the values were divided by 1000 to match.
+            // Both are gone: the chart carries whole amounts and the axis
+            // formatter states the currency, so this cannot disagree with the
+            // dashboard again.
+            title: `Pipeline by ${intent.groupBy ?? "stage"}`,
+            unit: "money" as const,
+            data: Object.entries(grouped).map(([name, value]) => ({ name, value })),
+          }
         : null,
       rows: [],
     };

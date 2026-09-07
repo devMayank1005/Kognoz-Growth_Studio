@@ -1,3 +1,4 @@
+import { TIER_VALUE } from "@/domain/routing";
 import { practiceForTarget } from "@/domain/practices";
 import type { Target } from "@/domain/scoring";
 
@@ -75,7 +76,8 @@ function toRow(t: Target): EngineRow {
     industry: t.industry,
     trigger: t.evidence,
     signal: t.signal,
-    value: 300_000,
+    // The default lives in one place, and it moves when the tiers are re-priced.
+    value: TIER_VALUE.core,
     url: t.url,
   };
 }

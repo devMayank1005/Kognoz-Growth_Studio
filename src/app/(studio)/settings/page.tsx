@@ -55,6 +55,7 @@ export default async function SettingsPage() {
           <ZohoSettings
             status={zoho}
             bcc={cfg?.zohoBcc ?? ""}
+            dryRun={cfg?.zohoDryRun ?? true}
             canManage={canManageIntegrations(session.role)}
             defaultDc={defaultDc() ?? "us"}
             money={money}

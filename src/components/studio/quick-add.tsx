@@ -4,7 +4,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
-import { viewMoney, type MoneyView } from "@/domain/money";
+import { entryUnit, fromEntry, toEntry, viewMoney, type MoneyView } from "@/domain/money";
+import { TIER_VALUE } from "@/domain/routing";
 import { PRACTICES } from "@/domain/practices";
 
 /**
@@ -19,7 +20,10 @@ export function QuickAdd({ money }: { money: MoneyView }) {
   const [open, setOpen] = useState(false);
   const [company, setCompany] = useState("");
   const [solution, setSolution] = useState(PRACTICES[0]?.name ?? "");
-  const [value, setValue] = useState("300");
+  // 300 in whichever unit the currency is typed in: $300K, or ₹300L = ₹3Cr.
+  // Both are `TIER_VALUE.core`, which is what an unpriced card defaults to.
+  const unit = entryUnit(money.base);
+  const [value, setValue] = useState(String(toEntry(TIER_VALUE.core, money.base)));
   const [busy, setBusy] = useState(false);
 
   if (!open) {
@@ -44,7 +48,7 @@ export function QuickAdd({ money }: { money: MoneyView }) {
         {
           company: name,
           solution,
-          value: Number(value) * 1000 || undefined,
+          value: fromEntry(Number(value), money.base) || undefined,
           contact_name: "",
           contact_title: "",
           country: "",
@@ -99,15 +103,15 @@ export function QuickAdd({ money }: { money: MoneyView }) {
           </option>
         ))}
       </select>
-      <span className="text-[13px] text-faint">$</span>
+      <span className="text-[13px] text-faint">{unit.symbol}</span>
       <input
         value={value}
         inputMode="numeric"
         onChange={(e) => setValue(e.target.value.replace(/[^0-9]/g, ""))}
-        aria-label="Value in thousands"
+        aria-label={`Value in ${money.base === "INR" ? "lakh" : "thousands"}`}
         className="num w-16 rounded border border-line bg-canvas px-2 py-1 text-[13px] text-body"
       />
-      <span className="text-[13px] text-faint">K USD</span>
+      <span className="text-[13px] text-faint">{unit.label} {money.base}</span>
       <button
         type="button"
         disabled={busy}

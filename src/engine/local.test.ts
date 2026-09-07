@@ -131,3 +131,32 @@ describe("matchIntent — everything else goes to the model", () => {
     expect(matchIntent(q)).toBeNull();
   });
 });
+
+describe("parseMoney — rupee shorthand", () => {
+  /**
+   * Lakh and crore did not parse at all, so `add NEOM at 5cr` fell through to
+   * no value while `at 500k` quietly meant five lakh.
+   */
+  it("reads crore and lakh", () => {
+    expect(parseMoney("3cr")).toBe(30_000_000);
+    expect(parseMoney("2.5Cr")).toBe(25_000_000);
+    expect(parseMoney("50L")).toBe(5_000_000);
+    // Whitespace is stripped before matching, so the spaced form works too.
+    expect(parseMoney("75 lakh")).toBe(7_500_000);
+    expect(parseMoney("75lakh")).toBe(7_500_000);
+  });
+
+  it("strips a rupee sign and Indian grouping", () => {
+    expect(parseMoney("₹75,00,000")).toBe(7_500_000);
+  });
+
+  /** Deliberately unchanged: a suffix must not silently change meaning. */
+  it("keeps k and m meaning thousand and million", () => {
+    expect(parseMoney("300k")).toBe(300_000);
+    expect(parseMoney("1.5M")).toBe(1_500_000);
+  });
+
+  it("still refuses nonsense", () => {
+    for (const raw of ["", "abc", "3x", "cr"]) expect(parseMoney(raw)).toBeUndefined();
+  });
+});

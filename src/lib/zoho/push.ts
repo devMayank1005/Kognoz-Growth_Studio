@@ -5,6 +5,7 @@ import { loadDnc, loadPipeline } from "@/db/queries";
 import { activities, opportunities, settings, zohoConnections } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
 import { classifyZohoError, describeZohoError } from "@/domain/zoho/errors";
+import { LEAD_SOURCE } from "@/domain/zoho/fields";
 import { blockedReason, buildDeal, pushActionFor, toLead, type PushAction } from "@/domain/zoho/to-zoho";
 import { currencyCodeOf } from "@/domain/zoho/currency";
 import { loadMoneyView } from "@/lib/money-view";
@@ -130,7 +131,9 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
 
   if (action === "CREATE_LEAD" || action === "UPDATE_LEAD") {
     zohoModule = LEAD;
-    payload = toLead(sync) as unknown as Record<string, unknown>;
+    // The Description carries a value; it must be in the currency the values
+    // are actually stored in, not the dollars the helper used to assume.
+    payload = toLead(sync, LEAD_SOURCE, money.base) as unknown as Record<string, unknown>;
   } else if (action === "CREATE_DEAL" || action === "UPDATE_DEAL") {
     zohoModule = DEAL;
     // The CRM is in rupees and the card is in dollars. `buildDeal` refuses

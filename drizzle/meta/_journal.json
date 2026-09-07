@@ -78,6 +78,20 @@
       "when": 1788781680622,
       "tag": "0010_complex_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788787173978,
+      "tag": "0011_redenominate_to_inr",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788787862488,
+      "tag": "0012_redenominate_stored_rows",
+      "breakpoints": true
     }
   ]
 }

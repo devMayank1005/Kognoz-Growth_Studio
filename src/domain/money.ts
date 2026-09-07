@@ -145,6 +145,60 @@ export function formatCompact(value: number, currency: Currency): string {
 }
 
 /**
+ * Whether the stored currency and the programme constants agree.
+ *
+ * They can disagree for exactly one reason: a currency re-denomination is
+ * half-applied — the data migrated but the code did not ship, or the reverse.
+ * In that window a card priced with the wrong-magnitude constants is stored
+ * permanently wrong and looks entirely plausible, which is the failure this
+ * codebase keeps having to design around.
+ *
+ * So writes refuse instead. It fails closed, it needs nobody to remember
+ * anything, and it protects the reverse case too: a deploy rolled back onto
+ * migrated data.
+ */
+export function constantsMatch(base: Currency, constants: Currency): boolean {
+  return base === constants;
+}
+
+export const MIGRATION_IN_PROGRESS =
+  "Growth Studio is part-way through a currency change: the stored currency and the programme thresholds disagree. Adding and re-pricing are paused until it finishes.";
+
+/**
+ * How money is TYPED IN, per currency.
+ *
+ * Both value inputs were fixed to thousands with a `$` in front — `300` meaning
+ * $300K. Rupees are not entered in thousands: ₹3,00,00,000 is "3 crore" or
+ * "300 lakh", never "30000 thousand". Lakh is the unit that keeps the whole
+ * wedge-to-whale range a small whole number (75 to 500), which is exactly the
+ * property thousands gives dollars.
+ */
+export interface EntryUnit {
+  /** Multiply a typed number by this to get the stored amount. */
+  step: number;
+  /** Shown after the input. */
+  label: string;
+  /** Shown before it. */
+  symbol: string;
+}
+
+export function entryUnit(currency: Currency): EntryUnit {
+  return currency === "INR"
+    ? { step: 100_000, label: "L", symbol: "₹" }
+    : { step: 1_000, label: "K", symbol: "$" };
+}
+
+/** Stored amount → the number to put in the box. */
+export function toEntry(value: number, currency: Currency): number {
+  return Math.round(value / entryUnit(currency).step);
+}
+
+/** The number in the box → the amount to store. */
+export function fromEntry(entered: number, currency: Currency): number {
+  return Math.round(entered * entryUnit(currency).step);
+}
+
+/**
  * Everything a component needs to render money, in one serialisable object.
  *
  * Passed from server components down to client ones as a prop — the same shape

@@ -10,6 +10,7 @@ import { db } from "@/db/client";
 import { activities, dnc, partnerTowers, settings, user } from "@/db/schema";
 import { rateFromDecimal } from "@/domain/money";
 import { TOWER_KEYS } from "@/domain/practices";
+import { refreshFxRate, type FxUpdate } from "@/lib/fx";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -76,7 +77,8 @@ export async function saveOrgSettings(input: unknown) {
  * Which currency the interface renders in.
  *
  * Display only — no stored value moves, and the tier thresholds stay in the
- * base currency, so a $300K card still routes as core whichever way this is set.
+ * base currency, so a core-sized card still routes as core whichever way this
+ * is set.
  */
 export async function saveDisplayCurrency(input: unknown) {
   const session = await requireSession();
@@ -135,6 +137,34 @@ export async function saveFxRate(input: unknown) {
 
 /** Hands the rate back to the daily fetch. The last manual value stays until
  *  the next fetch replaces it — clearing the override must not clear the rate. */
+/**
+ * Fetch today's rate.
+ *
+ * `refreshFxRate` and its keyless Frankfurter fetch have existed since the FX
+ * work landed, with exactly one caller — the nightly sweep. There was no way
+ * to correct a stale rate from the interface except to type one, and typing
+ * one sets `fxManualOverride`, which silences the nightly fetch for good. So
+ * the only manual repair available also broke the automatic one.
+ */
+export async function fetchFxRate(): Promise<
+  { ok: true; status: FxUpdate["status"]; rate?: number } | { ok: false; message: string }
+> {
+  const session = await requireSession();
+
+  try {
+    // Guarded like the sweep's `refresh-fx` step guards it: `refreshFxRate`
+    // swallows a failed FETCH, but its two database writes are unguarded.
+    const result = await refreshFxRate(session.orgId);
+    revalidatePath("/settings");
+    // The rate governs every screen when a conversion is in play.
+    revalidatePath("/", "layout");
+    return { ok: true, status: result.status, rate: result.rate };
+  } catch (err) {
+    console.error("[fx] manual refresh failed:", (err as Error).message);
+    return { ok: false, message: "Could not reach the rate source. The stored rate is unchanged." };
+  }
+}
+
 export async function clearFxOverride() {
   const session = await requireSession();
   await db

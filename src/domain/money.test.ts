@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  convertAmount, formatCompact, formatMoney, isRateStale, MAX_RATE_AGE_DAYS,
+  convertAmount, entryUnit, formatCompact, formatMoney, fromEntry, isRateStale, MAX_RATE_AGE_DAYS, toEntry,
   effectiveCurrency, fallbackReason, isFallingBack, rateAgeDays, rateFromDecimal,
   rateToDecimal, RATE_SCALE, viewMoney, type FxRate,
 } from "./money";
@@ -189,5 +189,32 @@ describe("viewMoney — what the screens call", () => {
   it("is not 'falling back' when the operator asked for the base currency", () => {
     expect(isFallingBack(usd, NOW)).toBe(false);
     expect(fallbackReason(usd, NOW)).toBeNull();
+  });
+});
+
+describe("entry units", () => {
+  /**
+   * Both value inputs were fixed to thousands with a `$` in front. Rupees are
+   * not typed in thousands — ₹3Cr is "300 lakh", never "30000 thousand".
+   */
+  it("types dollars in thousands and rupees in lakh", () => {
+    expect(entryUnit("USD")).toEqual({ step: 1_000, label: "K", symbol: "$" });
+    expect(entryUnit("INR")).toEqual({ step: 100_000, label: "L", symbol: "₹" });
+  });
+
+  it("round-trips a value through the box unchanged", () => {
+    for (const [currency, stored] of [["USD", 300_000], ["INR", 30_000_000]] as const) {
+      expect(fromEntry(toEntry(stored, currency), currency)).toBe(stored);
+    }
+  });
+
+  it("keeps the whole wedge-to-whale range a small whole number", () => {
+    // The property thousands gives dollars, lakh has to give rupees — or the
+    // operator is typing seven digits into a box built for three.
+    for (const stored of [7_500_000, 30_000_000, 50_000_000]) {
+      const n = toEntry(stored, "INR");
+      expect(Number.isInteger(n)).toBe(true);
+      expect(n).toBeLessThan(1000);
+    }
   });
 });

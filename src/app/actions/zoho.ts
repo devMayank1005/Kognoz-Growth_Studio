@@ -2,10 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 
+import { eq } from "drizzle-orm";
+
 import { db } from "@/db/client";
-import { activities } from "@/db/schema";
+import { activities, settings } from "@/db/schema";
 import { deleteZohoConnection, loadRevocationData } from "@/db/zoho";
 import { canManageIntegrations } from "@/domain/access";
+import type { Currency } from "@/domain/money";
+import { currencyCodeOf } from "@/domain/zoho/currency";
 import { LEAD_SOURCE } from "@/domain/zoho/fields";
 import { describeZohoError } from "@/domain/zoho/errors";
 import { ZOHO_DEAL_STAGES } from "@/domain/zoho/stage";
@@ -65,15 +69,41 @@ export async function testZohoConnection(): Promise<
       state: "ok",
       detail: `${typeof row.company_name === "string" ? row.company_name : "connected"} · ${currency}`,
     });
+    /**
+     * Compared against what Growth Studio actually stores, not a literal.
+     *
+     * This read `currency === "USD"` and warned "your CRM is in INR but Growth
+     * Studio values are USD" — which inverts the moment the base becomes INR,
+     * on the very page an operator opens to confirm a currency change worked.
+     * It was doubly wrong: `/org` returns `"Indian Rupee"`, so the literal
+     * never matched either currency and the check could only ever warn.
+     */
+    const crmCode = currencyCodeOf(currency);
+    const [cfg] = await db
+      .select({ base: settings.baseCurrency })
+      .from(settings)
+      .where(eq(settings.orgId, session.orgId))
+      .limit(1);
+    const base = (cfg?.base ?? "USD") as Currency;
+
     checks.push(
-      currency === "USD"
-        ? { label: "Currency", state: "ok", detail: "USD — matches the values Growth Studio stores." }
-        : {
-            // Not cosmetic: Growth Studio holds USD and would push bare numbers.
+      crmCode === base
+        ? {
             label: "Currency",
-            state: "warn",
-            detail: `Your CRM is in ${currency}, but Growth Studio values are USD. Pushing them unconverted would misstate every deal — this must be settled before any write.`,
-          },
+            state: "ok",
+            detail: `${crmCode} — matches the values Growth Studio stores, so amounts go across untouched.`,
+          }
+        : crmCode
+          ? {
+              label: "Currency",
+              state: "ok",
+              detail: `${crmCode}, converted from ${base} on the way out.`,
+            }
+          : {
+              label: "Currency",
+              state: "warn",
+              detail: `Growth Studio cannot price "${currency}". Pushes will refuse rather than send a figure it cannot convert.`,
+            },
     );
   }
 
@@ -163,4 +193,47 @@ export async function disconnectZoho(): Promise<
 
   revalidatePath("/settings");
   return { ok: true, revoked };
+}
+
+/**
+ * Dry run on or off (PRD §6).
+ *
+ * `settings.zoho_dry_run` defaults to `true` and, until now, had **no writer
+ * anywhere in the codebase** — five read sites and nothing that could change
+ * them. The push toast meanwhile told the operator to "turn dry run off in
+ * Settings", which was impossible: the same dead-control problem the push leg
+ * was built to fix, one layer up.
+ *
+ * It lives in this file, not `settings.ts`, so it inherits the server-side
+ * permission guard. `settings.ts` checks permission in the UI only, and this is
+ * the switch that lets records into a client's live CRM.
+ */
+export async function setZohoDryRun(
+  on: boolean,
+): Promise<{ ok: true; dryRun: boolean } | { ok: false; message: string }> {
+  const session = await requireSession();
+  if (!canManageIntegrations(session.role)) return forbidden;
+
+  const updated = await db
+    .update(settings)
+    .set({ zohoDryRun: on })
+    .where(eq(settings.orgId, session.orgId))
+    .returning({ dryRun: settings.zohoDryRun });
+
+  if (updated.length === 0) return { ok: false, message: "No settings row for this organisation." };
+
+  // §8 wants an audit entry on every write, and turning this off is the single
+  // most consequential setting in the product: it is the moment Growth Studio
+  // starts writing into someone else's CRM.
+  await db.insert(activities).values({
+    orgId: session.orgId,
+    type: "note",
+    payloadJson: { action: "zoho_dry_run_changed", dryRun: on },
+    actorId: session.userId,
+  });
+
+  revalidatePath("/settings");
+  // The push chip and the pipeline pills read this to decide what to promise.
+  revalidatePath("/pipeline");
+  return { ok: true, dryRun: on };
 }

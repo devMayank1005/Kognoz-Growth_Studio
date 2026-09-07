@@ -9,6 +9,7 @@
  */
 
 import { LEAD_SOURCE, NO_NAMED_CONTACT } from "./fields";
+import type { Currency } from "../money";
 import { toDeal, toLead, zohoTargetFor } from "./to-zoho";
 import type { SyncCard } from "./types";
 
@@ -42,9 +43,13 @@ function file(header: readonly string[], rows: string[]): string {
   return [row([...header]), ...rows].join("\r\n") + "\r\n";
 }
 
-export function leadsCsv(cards: readonly SyncCard[], leadSource = LEAD_SOURCE): string {
+export function leadsCsv(
+  cards: readonly SyncCard[],
+  leadSource = LEAD_SOURCE,
+  currency: Currency = "USD",
+): string {
   const rows = cards.map((card) => {
-    const lead = toLead(card, leadSource);
+    const lead = toLead(card, leadSource, currency);
     return row([
       lead.First_Name ?? "",
       // The placeholder is carried through rather than blanked: Zoho rejects an

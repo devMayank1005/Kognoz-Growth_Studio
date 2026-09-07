@@ -7,8 +7,8 @@ import { settings } from "@/db/schema";
 import { byGeography, bySolution, byStage, byTower, curveSeries, openTotal, type PanelRow } from "@/domain/dashboard";
 import { requireSession } from "@/lib/session";
 import { loadMoneyView } from "@/lib/money-view";
-import { viewMoney, type MoneyView } from "@/domain/money";
-import { PROGRAM_TARGET } from "@/domain/revenue";
+import { formatCompact, viewMoney, type MoneyView } from "@/domain/money";
+import { PROGRAM_TARGET, PROGRAM_TARGET_USD, REDENOMINATION } from "@/domain/revenue";
 import { eq } from "drizzle-orm";
 
 /**
@@ -40,11 +40,15 @@ export default async function DashboardPage() {
       </div>
 
       <section className="mb-8">
-        {/* The programme target is a USD commitment (PRD §0); the heading
-            renders it in whatever the operator is reading, so the curve's axis
-            and its title cannot disagree. */}
+        {/* The target is a rupee figure now, but the commitment it encodes is
+            still the PRD's "$20M USD" (§0). Both are stated: the dollar half is
+            a frozen constant, never a live conversion, so the headline cannot
+            drift to $21.2M one week and $19.4M the next. */}
         <h2 className="mb-2 text-[11px] uppercase tracking-wide text-faint">
           {viewMoney(PROGRAM_TARGET, money)} in 18 months
+          <span className="ml-1.5 normal-case tracking-normal text-faint/70">
+            · the {formatCompact(PROGRAM_TARGET_USD, "USD")} commitment at ₹{REDENOMINATION.rate}
+          </span>
         </h2>
         <CurveChart points={curve} money={money} />
       </section>

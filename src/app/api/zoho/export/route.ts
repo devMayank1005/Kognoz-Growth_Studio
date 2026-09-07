@@ -1,5 +1,7 @@
 import { loadPipeline } from "@/db/queries";
 import { dealsCsv, leadsCsv, splitForExport } from "@/domain/zoho/csv";
+import { LEAD_SOURCE } from "@/domain/zoho/fields";
+import { loadMoneyView } from "@/lib/money-view";
 import { toSyncCard } from "@/lib/zoho/card";
 import { getStudioSession } from "@/lib/session";
 
@@ -37,7 +39,11 @@ export async function GET(request: Request) {
 
   const today = new Date();
   const stamp = today.toISOString().slice(0, 10);
-  const body = kind === "leads" ? leadsCsv(leads) : dealsCsv(deals, today);
+  // The CSV is the same mapping the API sync uses, so it must state the same
+  // currency — an export that says $ while the sync sends ₹ is two sources of
+  // truth for one number.
+  const money = await loadMoneyView(session.orgId);
+  const body = kind === "leads" ? leadsCsv(leads, LEAD_SOURCE, money.base) : dealsCsv(deals, today);
 
   return new Response(body, {
     headers: {

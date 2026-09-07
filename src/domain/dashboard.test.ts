@@ -93,8 +93,8 @@ describe("curveSeries", () => {
   });
 
   it("hits the three anchor points the PRD commits to", () => {
-    expect(series[5].target).toBeCloseTo(1_500_000, 0);
-    expect(series[11].target).toBeCloseTo(6_500_000, 0);
+    expect(series[5].target).toBeCloseTo(150_000_000, 0);   // ₹15Cr
+    expect(series[11].target).toBeCloseTo(650_000_000, 0);  // ₹65Cr
     expect(series[17].target).toBe(PROGRAM_TARGET);
   });
 

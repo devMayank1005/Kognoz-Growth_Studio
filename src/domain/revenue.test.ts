@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { curveTarget, monthOf, PROGRAM_TARGET, TOWER_TARGETS } from "./revenue";
+import { formatCompact } from "./money";
+import {
+  curveTarget, monthOf, PROGRAM_TARGET, PROGRAM_TARGET_USD, REDENOMINATION, TOWER_TARGETS,
+} from "./revenue";
 
-const M = 1_000_000;
+/** One crore. The unit the programme is actually planned in. */
+const CR = 10_000_000;
 
 describe("curveTarget", () => {
   it("hits the three anchor points the PRD commits to", () => {
-    expect(curveTarget(6)).toBeCloseTo(1.5 * M, 0);
-    expect(curveTarget(12)).toBeCloseTo(6.5 * M, 0);
-    expect(curveTarget(18)).toBeCloseTo(20 * M, 0);
+    expect(curveTarget(6)).toBeCloseTo(15 * CR, 0);
+    expect(curveTarget(12)).toBeCloseTo(65 * CR, 0);
+    expect(curveTarget(18)).toBeCloseTo(200 * CR, 0);
   });
 
   it("starts at zero in month zero", () => {
@@ -18,8 +22,8 @@ describe("curveTarget", () => {
     for (let m = 1; m <= 18; m++) expect(curveTarget(m)).toBeGreaterThan(curveTarget(m - 1));
   });
 
-  it("clamps at $20M beyond month 18 rather than extrapolating", () => {
-    expect(curveTarget(24)).toBe(20 * M);
+  it("clamps at ₹200Cr beyond month 18 rather than extrapolating", () => {
+    expect(curveTarget(24)).toBe(200 * CR);
   });
 });
 
@@ -38,13 +42,37 @@ describe("monthOf", () => {
 });
 
 describe("tower targets", () => {
-  it("splits T2 $6M / T3 $5M / T4 $5M / T1 $4M", () => {
-    expect(TOWER_TARGETS).toEqual({ T1: 4 * M, T2: 6 * M, T3: 5 * M, T4: 5 * M });
+  it("splits T2 ₹60Cr / T3 ₹50Cr / T4 ₹50Cr / T1 ₹40Cr", () => {
+    expect(TOWER_TARGETS).toEqual({ T1: 40 * CR, T2: 60 * CR, T3: 50 * CR, T4: 50 * CR });
   });
 
-  it("sums to the $20M north star", () => {
+  it("sums to the ₹200Cr north star", () => {
     const sum = Object.values(TOWER_TARGETS).reduce((a, b) => a + b, 0);
     expect(sum).toBe(PROGRAM_TARGET);
-    expect(sum).toBe(20 * M);
+    expect(sum).toBe(200 * CR);
+  });
+});
+
+/**
+ * These assert that the constants are RUPEES, not that ×100 was computed
+ * correctly — a test asserting `PROGRAM_TARGET === 20_000_000 * 100` would be
+ * tautological. The failure worth catching is someone "fixing" a number back
+ * to dollars, and only a magnitude check sees that.
+ */
+describe("the re-denomination holds", () => {
+  it("keeps the target in crore, not millions", () => {
+    expect(PROGRAM_TARGET).toBeGreaterThan(100 * CR);
+    expect(formatCompact(PROGRAM_TARGET, "INR")).toBe("₹200Cr");
+  });
+
+  it("still encodes the $20M commitment exactly", () => {
+    expect(PROGRAM_TARGET).toBe(PROGRAM_TARGET_USD * REDENOMINATION.rate);
+    expect(formatCompact(PROGRAM_TARGET_USD, "USD")).toBe("$20M");
+  });
+
+  it("records how and when the conversion happened", () => {
+    expect(REDENOMINATION.from).toBe("USD");
+    expect(REDENOMINATION.to).toBe("INR");
+    expect(REDENOMINATION.migration).toBe("0011");
   });
 });

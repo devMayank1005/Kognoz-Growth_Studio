@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { PROGRAM_TARGET } from "@/domain/revenue";
+import { TIER_VALUE } from "@/domain/routing";
+
 import { PRACTICES } from "@/domain/practices";
 
 /**
@@ -24,7 +27,18 @@ export const engineRowSchema = z.object({
   industry: z.string(),
   trigger: z.string().describe("The dated fact, and why it fits"),
   signal: z.string().describe("Signal code such as H1 or L6, or empty"),
-  value: z.number().int().positive(),
+  /**
+   * A plausibility band, not a guess.
+   *
+   * This was `positive()`, which accepts the old dollar magnitudes — 75000,
+   * 300000, 500000 — unchanged. A model still thinking in dollars would have
+   * produced cards priced at a hundredth of their worth, and every one would
+   * have looked like a perfectly ordinary number. The floor is the wedge value
+   * precisely so all three legacy figures fall below it and are rejected;
+   * `makeCard` then defaults the row to `TIER_VALUE.core` rather than storing
+   * something wrong. Same move as the FX fetcher's 1–1000 sanity band.
+   */
+  value: z.number().int().min(TIER_VALUE.wedge).max(PROGRAM_TARGET / 4),
   url: z.string().describe("Source URL, or empty"),
 });
 
@@ -32,6 +46,15 @@ export const engineChartSchema = z.object({
   type: z.enum(["bar", "line"]),
   title: z.string(),
   data: z.array(z.object({ name: z.string(), value: z.number() })).max(8),
+  /**
+   * Whether the values are money or a count of things.
+   *
+   * Optional and defaulting to counts, because most charts count triggers. The
+   * pipeline chart used to dodge this by pre-dividing every value by 1000 and
+   * putting "($K)" in the title — which hardcoded dollars into a chart axis and
+   * would have read "₹K" nonsense the moment the currency changed.
+   */
+  unit: z.enum(["money", "count"]).optional(),
 });
 
 export const engineExtractionSchema = z.object({

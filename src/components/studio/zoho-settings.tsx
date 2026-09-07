@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { disconnectZoho, testZohoConnection, type PreflightCheck } from "@/app/actions/zoho";
+import { disconnectZoho, setZohoDryRun, testZohoConnection, type PreflightCheck } from "@/app/actions/zoho";
 import { saveZohoBcc } from "@/app/actions/settings";
 import { ZOHO_DC_CODES, ZOHO_DCS } from "@/domain/zoho/dc";
 import { rateToDecimal, type MoneyView } from "@/domain/money";
+import { currencyCodeOf } from "@/domain/zoho/currency";
 import type { ZohoStatus } from "@/db/zoho";
 
 /**
@@ -18,12 +19,14 @@ import type { ZohoStatus } from "@/db/zoho";
 export function ZohoSettings({
   status,
   bcc,
+  dryRun,
   canManage,
   defaultDc,
   money,
 }: {
   status: ZohoStatus;
   bcc: string;
+  dryRun: boolean;
   canManage: boolean;
   defaultDc: string;
   money: MoneyView;
@@ -114,7 +117,7 @@ export function ZohoSettings({
           {/* Stated outright. No operator should have to infer which currency
               left the building — especially when the screen may be showing a
               different one. */}
-          {status.zohoCurrency && status.zohoCurrency !== money.base && (
+          {status.zohoCurrency && currencyCodeOf(status.zohoCurrency) !== money.base && (
             <p className="text-[11px] text-muted">
               Amounts are sent to Zoho in {status.zohoCurrency}
               {money.rate
@@ -169,6 +172,8 @@ export function ZohoSettings({
       )}
 
       {checks && <Checks checks={checks} />}
+
+      {status.status === "connected" && canManage && <DryRun dryRun={dryRun} />}
 
       <Bcc bcc={bcc} />
 
@@ -293,3 +298,93 @@ function Bcc({ bcc }: { bcc: string }) {
   );
 }
 
+/**
+ * Dry run — the switch that decides whether any of this is real.
+ *
+ * Turning it OFF gets the two-step confirm the disconnect control uses,
+ * because that click is the moment Growth Studio starts writing records into a
+ * CRM the client's team uses every day, and nothing in this app can take them
+ * back out. Turning it back ON is one click: stopping writes needs no warning.
+ */
+function DryRun({ dryRun }: { dryRun: boolean }) {
+  const [on, setOn] = useState(dryRun);
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  async function set(next: boolean) {
+    setBusy(true);
+    try {
+      const r = await setZohoDryRun(next);
+      if (!r.ok) return toast.error(r.message);
+      setOn(r.dryRun);
+      setConfirming(false);
+      toast.success(
+        r.dryRun ? "Dry run is on" : "Dry run is off — pushes now write to Zoho",
+        {
+          description: r.dryRun
+            ? "Payloads go to the server log. Nothing reaches Zoho."
+            : "The next push creates real Leads and Deals in Konverz.",
+        },
+      );
+    } catch {
+      toast.error("Could not change that", { description: "The server did not answer." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-5 border-t border-line pt-3">
+      <p className="text-[11px] uppercase tracking-wide text-faint">Dry run</p>
+
+      <p className={`mt-1 text-[13px] ${on ? "text-amber" : "text-body"}`}>
+        {on
+          ? "On — pushes are checked and logged, and nothing is written to Zoho."
+          : "Off — pushes create and update real records in Zoho."}
+      </p>
+
+      {on ? (
+        confirming ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-[13px] text-danger">
+              This writes Leads and Deals into the live CRM. Records cannot be unwritten from here.
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void set(false)}
+              className="rounded border border-danger px-2.5 py-1 text-[13px] text-danger transition-colors duration-150 hover:bg-danger/10 disabled:opacity-40"
+            >
+              {busy ? "…" : "Yes, write to Zoho"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="px-1 text-[11px] text-faint hover:text-body"
+            >
+              cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setConfirming(true)}
+            className="mt-2 rounded border border-line px-2.5 py-1 text-[13px] text-body transition-colors duration-150 hover:bg-panel disabled:opacity-40"
+          >
+            Turn dry run off
+          </button>
+        )
+      ) : (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void set(true)}
+          className="mt-2 rounded border border-line px-2.5 py-1 text-[13px] text-body transition-colors duration-150 hover:bg-panel disabled:opacity-40"
+        >
+          {busy ? "…" : "Turn dry run back on"}
+        </button>
+      )}
+    </div>
+  );
+}

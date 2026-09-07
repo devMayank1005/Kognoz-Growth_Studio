@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { makeCard } from "./routing";
+import { CORE_FLOOR, TIER_VALUE, WHALE_FLOOR, makeCard } from "./routing";
+
+/** One crore, one lakh — the units the tiers are actually expressed in. */
+const CR = 10_000_000;
+const L = 100_000;
 
 const PARTNERS = { T1: "Anita", T2: "Meera", T3: "Rahul", T4: "Sanjay" } as const;
 const opts = (over = {}) => ({
@@ -10,9 +14,9 @@ const opts = (over = {}) => ({
 });
 
 describe("makeCard — PRD acceptance criterion 3", () => {
-  it("routes 'add Emaar for Hire at 300K' to a Tagged T3 card worth $300K", () => {
+  it("routes 'add Emaar for Hire at 3cr' to a Tagged T3 card worth ₹3Cr", () => {
     const card = makeCard(
-      { company: "Emaar", solution: "Hire", value: 300_000 },
+      { company: "Emaar", solution: "Hire", value: 3 * CR },
       opts({ stage: "Plan reach-out" }),
     );
 
@@ -20,7 +24,7 @@ describe("makeCard — PRD acceptance criterion 3", () => {
     expect(card.practice).toBe("Hire");
     expect(card.tower).toBe("T3");
     expect(card.partner).toBe("Rahul");
-    expect(card.value).toBe(300_000);
+    expect(card.value).toBe(3 * CR);
     expect(card.tier).toBe("core");
     expect(card.stage).toBe("Plan reach-out");
   });
@@ -28,25 +32,36 @@ describe("makeCard — PRD acceptance criterion 3", () => {
 
 describe("makeCard — value tiers", () => {
   it.each([
-    [50_000, "wedge"],
-    [249_999, "wedge"],
-    [250_000, "core"],
-    [499_999, "core"],
-    [500_000, "whale"],
-    [2_000_000, "whale"],
-  ])("prices $%i as %s", (value, tier) => {
+    [5 * L, "wedge"],
+    [CORE_FLOOR - 1, "wedge"],
+    [CORE_FLOOR, "core"],
+    [WHALE_FLOOR - 1, "core"],
+    [WHALE_FLOOR, "whale"],
+    [20 * CR, "whale"],
+  ])("prices %i as %s", (value, tier) => {
     expect(makeCard({ company: "X", solution: "Hire", value }, opts()).tier).toBe(tier);
   });
 
-  it("sets the whale flag only at or above $500K", () => {
-    expect(makeCard({ company: "X", solution: "Hire", value: 499_999 }, opts()).whale).toBe(false);
-    expect(makeCard({ company: "X", solution: "Hire", value: 500_000 }, opts()).whale).toBe(true);
+  it("sets the whale flag only at or above the whale floor", () => {
+    expect(makeCard({ company: "X", solution: "Hire", value: WHALE_FLOOR - 1 }, opts()).whale).toBe(false);
+    expect(makeCard({ company: "X", solution: "Hire", value: WHALE_FLOOR }, opts()).whale).toBe(true);
   });
 
   it("defaults an unpriced row to the core value rather than zero", () => {
     const card = makeCard({ company: "X", solution: "Hire" }, opts());
-    expect(card.value).toBe(300_000);
+    expect(card.value).toBe(TIER_VALUE.core);
     expect(card.tier).toBe("core");
+  });
+
+  /**
+   * The thresholds are rupees now. A magnitude check is the only kind that
+   * catches someone converting them back to dollars — an equality test against
+   * the same literal would pass either way.
+   */
+  it("keeps the tier floors in crore", () => {
+    expect(CORE_FLOOR).toBe(2.5 * CR);
+    expect(WHALE_FLOOR).toBe(5 * CR);
+    expect(TIER_VALUE.core).toBeGreaterThan(1 * CR);
   });
 });
 

@@ -11,6 +11,9 @@ import { isDoNotContact } from "@/domain/dnc";
 import { industryOf } from "@/domain/industry";
 import { practiceByName } from "@/domain/practices";
 import { makeCard, type EngineRow } from "@/domain/routing";
+import { constantsMatch, MIGRATION_IN_PROGRESS } from "@/domain/money";
+import { CONSTANTS_CURRENCY } from "@/domain/revenue";
+import { loadMoneyView } from "@/lib/money-view";
 import { requireSession } from "@/lib/session";
 import { queueZohoPush } from "@/lib/zoho/notify";
 
@@ -46,6 +49,14 @@ export async function addCard(
   options?: { stage?: "Prospect" | "Plan reach-out" },
 ): Promise<AddCardResult> {
   const session = await requireSession();
+
+  const money = await loadMoneyView(session.orgId);
+  // The other write that prices a card. Same reason as `setCardValue`: during a
+  // half-applied currency change, `makeCard` would default an unpriced card to
+  // a constant of the wrong magnitude and store it permanently wrong.
+  if (!constantsMatch(money.base, CONSTANTS_CURRENCY)) {
+    return { ok: false, reason: "invalid", message: MIGRATION_IN_PROGRESS };
+  }
 
   const parsed = rowSchema.safeParse(input);
   if (!parsed.success) {

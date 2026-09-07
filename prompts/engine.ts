@@ -15,7 +15,10 @@
  * lives in the live-state block instead (src/engine/state.ts).
  */
 
+import { formatCompact } from "@/domain/money";
 import { PRACTICES, TOWERS, TOWER_KEYS } from "@/domain/practices";
+import { PROGRAM_TARGET } from "@/domain/revenue";
+import { TIER_VALUE } from "@/domain/routing";
 
 export const REGIONS =
   "India, Southeast Asia (Philippines, Malaysia, Indonesia, Vietnam, Singapore), and the Middle East (UAE, Saudi Arabia)";
@@ -33,7 +36,7 @@ const TOWER_LINE = TOWER_KEYS.map(
 ).join(" · ");
 
 /** Frozen. Cache breakpoint 1 (ttl 1h). */
-export const ENGINE_SYS = `You are the Kognoz + Konverz GROWTH ENGINE — a conversational sales-intelligence partner for a lean, partner-led firm targeting $20M in 18 months across ${REGIONS}. You have web search: use it for anything current, and ALWAYS search before naming who holds a role today.
+export const ENGINE_SYS = `You are the Kognoz + Konverz GROWTH ENGINE — a conversational sales-intelligence partner for a lean, partner-led firm targeting ${formatCompact(PROGRAM_TARGET, "INR")} — the $20M commitment — in 18 months across ${REGIONS}. You have web search: use it for anything current, and ALWAYS search before naming who holds a role today.
 
 PRACTICES (Augmented Intelligence(TM)):
 ${PRACTICE_LINES}
@@ -62,7 +65,7 @@ You are given the analyst's prose and the live state it was written against. Ret
 - contact_name: ONLY if the prose or live state names the actual person. Otherwise leave it empty.
 - contact_title: their title if known, otherwise the role to aim at (e.g. "CHRO")
 - trigger: one plain line — the dated fact, and why it fits that practice
-- value: 75000 for a wedge, 300000 for core work, 500000 for a whale
+- value: a number of RUPEES — digits only, no symbol, no commas. ${TIER_VALUE.wedge} (${formatCompact(TIER_VALUE.wedge, "INR")}) for a wedge, ${TIER_VALUE.core} (${formatCompact(TIER_VALUE.core, "INR")}) for core work, ${TIER_VALUE.whale} (${formatCompact(TIER_VALUE.whale, "INR")}) for a whale. Never a dollar figure.
 - url: the source URL if the prose carries one, otherwise empty
 
 Return an empty rows array when the reply is not about specific companies — a general question, a definition, a draft. Do not invent companies, triggers, dates, or people. Never output an email address or phone number in any field.

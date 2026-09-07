@@ -8,13 +8,16 @@ import { db, withOrg } from "@/db/client";
 import { accounts, activities, dnc, drafts, opportunities, people, settings, signals, stages, user } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
 import { applyOutcome, type Outcome } from "@/domain/outcomes";
+import { constantsMatch, formatCompact, MIGRATION_IN_PROGRESS } from "@/domain/money";
 import { buildPacket } from "@/domain/packet";
+import { loadMoneyView } from "@/lib/money-view";
 import { practiceById } from "@/domain/practices";
 import { afterSend, defaultDraftKind, type DraftKind } from "@/domain/touches";
 import { writeDraft } from "@/engine/draft";
 import { checkBudget, logModelCall } from "@/engine/budget";
 import { PROSE_MODEL, engineConfigError } from "@/engine/client";
-import { CORE_FLOOR, WHALE_FLOOR, tierFor, type Tier } from "@/domain/routing";
+import { CONSTANTS_CURRENCY } from "@/domain/revenue";
+import { CORE_FLOOR, VALUE_CAP, WHALE_FLOOR, tierFor, type Tier } from "@/domain/routing";
 import { requireSession } from "@/lib/session";
 import { queueZohoPush } from "@/lib/zoho/notify";
 
@@ -274,7 +277,14 @@ export async function dispatchPacket(opportunityId: string): Promise<PacketResul
       evidence: card.evidence ?? undefined, url: card.url ?? undefined,
       contact: card.contactName ? `${card.contactName} (${card.contactTitle ?? ""})` : (card.contactRole ?? ""),
     },
-    { today: today(), warmPath: card.anchor ?? undefined, draft: latest },
+    {
+      today: today(),
+      warmPath: card.anchor ?? undefined,
+      draft: latest,
+      // The packet goes to a partner with a figure on it. It must be the
+      // currency the figure is actually in.
+      currency: (await loadMoneyView(session.orgId)).base,
+    },
   );
 
   await withOrg(session.orgId, async (tx) => {
@@ -429,8 +439,16 @@ export async function setCardValue(
 ): Promise<{ ok: true; value: number; tier: Tier; whale: boolean } | { ok: false; message: string }> {
   const session = await requireSession();
 
+  const money = await loadMoneyView(session.orgId);
+  // Fails closed while a currency change is half-applied — see `constantsMatch`.
+  if (!constantsMatch(money.base, CONSTANTS_CURRENCY)) {
+    return { ok: false, message: MIGRATION_IN_PROGRESS };
+  }
+
   if (!Number.isFinite(value) || value < 0) return { ok: false, message: "Value must be a positive number." };
-  if (value > 100_000_000) return { ok: false, message: "That value looks wrong — cap is $100M." };
+  if (value > VALUE_CAP) {
+    return { ok: false, message: `That value looks wrong — cap is ${formatCompact(VALUE_CAP, money.base)}.` };
+  }
 
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
@@ -438,7 +456,15 @@ export async function setCardValue(
   const rounded = Math.round(value);
   const tier = tierFor(rounded);
   const whale = rounded >= WHALE_FLOOR;
-  const crossedToCore = card.value < 100_000 && rounded >= CORE_FLOOR;
+  /**
+   * `CORE_FLOOR`, not a bare literal.
+   *
+   * This read `card.value < 100_000` — a number that looks like the core floor
+   * but is not it, and would not have moved when the floors did. The §7
+   * wedge-to-core crossing metric would have quietly stopped being produced,
+   * with nothing failing and nothing to see.
+   */
+  const crossedToCore = card.value < CORE_FLOOR && rounded >= CORE_FLOOR;
 
   await withOrg(session.orgId, async (tx) => {
     await tx
