@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
+import { viewMoney, type MoneyView } from "@/domain/money";
 import { PRACTICES } from "@/domain/practices";
 
 /**
@@ -14,7 +15,7 @@ import { PRACTICES } from "@/domain/practices";
  * not be captured where the operator was already looking. Straight to Tagged
  * ("Plan reach-out"), the same stage the typed `add …` intent uses.
  */
-export function QuickAdd() {
+export function QuickAdd({ money }: { money: MoneyView }) {
   const [open, setOpen] = useState(false);
   const [company, setCompany] = useState("");
   const [solution, setSolution] = useState(PRACTICES[0]?.name ?? "");
@@ -59,7 +60,7 @@ export function QuickAdd() {
       if (!r.ok) return toast.error(r.message);
 
       toast.success(`${r.account} added`, {
-        description: `${r.practice} · ${r.tower} · ${r.partner} · $${Math.round(r.value / 1000)}K · Tagged`,
+        description: `${r.practice} · ${r.tower} · ${r.partner} · ${viewMoney(r.value, money)} · Tagged`,
       });
       setCompany("");
       setOpen(false);
@@ -106,7 +107,7 @@ export function QuickAdd() {
         aria-label="Value in thousands"
         className="num w-16 rounded border border-line bg-canvas px-2 py-1 text-[13px] text-body"
       />
-      <span className="text-[13px] text-faint">K</span>
+      <span className="text-[13px] text-faint">K USD</span>
       <button
         type="button"
         disabled={busy}

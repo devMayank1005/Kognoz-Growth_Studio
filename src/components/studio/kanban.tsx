@@ -10,6 +10,7 @@ import { toast } from "sonner";
 
 import { moveToStage } from "@/app/actions/card-actions";
 import type { PipelineCardRow } from "@/db/queries";
+import { viewMoney, type MoneyView } from "@/domain/money";
 import { practiceById } from "@/domain/practices";
 import { useSelection } from "@/store/selection";
 import { cn } from "@/lib/cn";
@@ -43,10 +44,8 @@ const STAGE_WORD: Record<string, string> = {
   "In conversation": "Talking", "Meeting set": "Meeting", "Proposal": "Proposal",
 };
 
-const fmt = (n: number) =>
-  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `$${Math.round(n / 1_000)}K`;
 
-export function Kanban({ cards }: { cards: PipelineCardRow[] }) {
+export function Kanban({ cards, money }: { cards: PipelineCardRow[]; money: MoneyView }) {
   const router = useRouter();
   const [moving, setMoving] = useState<string | null>(null);
 
@@ -80,9 +79,9 @@ export function Kanban({ cards }: { cards: PipelineCardRow[] }) {
           const inColumn = cards.filter((c) => c.stage === stage);
           const value = inColumn.reduce((n, c) => n + c.value, 0);
           return (
-            <Column key={stage} stage={stage} count={inColumn.length} value={value}>
+            <Column key={stage} stage={stage} count={inColumn.length} value={value} money={money}>
               {inColumn.map((card) => (
-                <Card key={card.id} card={card} busy={moving === card.id} onMove={move} />
+                <Card key={card.id} card={card} busy={moving === card.id} onMove={move} money={money} />
               ))}
             </Column>
           );
@@ -93,8 +92,8 @@ export function Kanban({ cards }: { cards: PipelineCardRow[] }) {
 }
 
 function Column({
-  stage, count, value, children,
-}: { stage: string; count: number; value: number; children: React.ReactNode }) {
+  stage, count, value, children, money,
+}: { stage: string; count: number; value: number; children: React.ReactNode; money: MoneyView }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
 
   return (
@@ -109,14 +108,14 @@ function Column({
       <h3 className="mb-2 flex items-baseline gap-2 px-1 text-[11px] uppercase tracking-wide text-faint">
         {STAGE_WORD[stage] ?? stage}
         <span className="num">{count}</span>
-        {value > 0 && <span className="num ml-auto normal-case tracking-normal text-muted">{fmt(value)}</span>}
+        {value > 0 && <span className="num ml-auto normal-case tracking-normal text-muted">{viewMoney(value, money)}</span>}
       </h3>
       <div className="flex min-h-16 flex-col gap-1.5">{children}</div>
     </section>
   );
 }
 
-function Card({ card, busy, onMove }: { card: PipelineCardRow; busy: boolean; onMove: (id: string, stage: string) => void }) {
+function Card({ card, busy, onMove, money }: { card: PipelineCardRow; busy: boolean; onMove: (id: string, stage: string) => void; money: MoneyView }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: card.id });
   const select = useSelection((s) => s.select);
 
@@ -127,7 +126,7 @@ function Card({ card, busy, onMove }: { card: PipelineCardRow; busy: boolean; on
       {...listeners}
       {...attributes}
       onClick={() => select(card)}
-      aria-label={`${card.account}, ${STAGE_WORD[card.stage] ?? card.stage}, ${fmt(card.value)}`}
+      aria-label={`${card.account}, ${STAGE_WORD[card.stage] ?? card.stage}, ${viewMoney(card.value, money)}`}
       className={cn(
         "cursor-grab rounded border border-line bg-surface p-2 text-left transition-shadow duration-150",
         isDragging && "opacity-60 shadow-lg",
@@ -137,7 +136,7 @@ function Card({ card, busy, onMove }: { card: PipelineCardRow; busy: boolean; on
       <p className="text-[13px] font-medium text-body">{card.account}</p>
       <p className="text-[11px] text-muted">{practiceById(card.practiceId)?.name ?? card.practiceId}</p>
       <p className="mt-1 flex items-baseline gap-2 text-[11px]">
-        <span className="num text-body">{fmt(card.value)}</span>
+        <span className="num text-body">{viewMoney(card.value, money)}</span>
         <span className="truncate text-faint">{card.partner}</span>
       </p>
       {card.touches > 0 && (

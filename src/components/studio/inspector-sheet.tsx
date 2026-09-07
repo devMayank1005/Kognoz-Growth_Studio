@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
 import { useEffect } from "react";
 
+import type { MoneyView } from "@/domain/money";
 import { useSelection } from "@/store/selection";
 
 import { InspectorPanel } from "./inspector-panel";
@@ -16,7 +17,7 @@ import { InspectorPanel } from "./inspector-panel";
  * Driven entirely by the existing selection store — selecting opens it,
  * dismissing clears the selection. No second source of truth.
  */
-export function InspectorSheet() {
+export function InspectorSheet({ money }: { money: MoneyView }) {
   const card = useSelection((s) => s.card);
   const select = useSelection((s) => s.select);
   const open = Boolean(card);
@@ -65,7 +66,7 @@ export function InspectorSheet() {
             >
               <X aria-hidden className="size-4" />
             </button>
-            <InspectorPanel />
+            <InspectorPanel money={money} />
           </motion.div>
         </motion.div>
       )}

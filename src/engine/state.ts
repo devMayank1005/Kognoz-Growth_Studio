@@ -1,4 +1,5 @@
 import type { Target } from "@/domain/scoring";
+import { viewMoney, type Currency, type FxRate, type MoneyView } from "@/domain/money";
 
 /**
  * The live-state block that follows the frozen system prompt.
@@ -47,6 +48,11 @@ export interface BuildStateInput {
   closedValue: number;
   target: number;
   now?: Date;
+  /** What values are stored in. Defaults to USD. */
+  baseCurrency?: Currency;
+  /** What the operator is reading, so the prose matches the screen. */
+  displayCurrency?: Currency;
+  fxRate?: FxRate | null;
 }
 
 const compactTargets = (targets: Target[]) =>
@@ -75,12 +81,29 @@ const compactPipeline = (cards: StateCard[]) =>
 const compactPeople = (people: StatePerson[]) =>
   people.slice(0, 60).map((p) => `${p.name}|${p.role}|${p.company}|${p.source}`).join("\n");
 
+/**
+ * Money for the model, in the currency the operator is reading.
+ *
+ * Without this the screen could say ₹2.83Cr while the chat answered $300K about
+ * the same card — the model only ever saw dollars. The figure is converted
+ * once, here, so the prose and the interface cannot disagree.
+ */
+function money(input: BuildStateInput, value: number): string {
+  const view: MoneyView = {
+    base: input.baseCurrency ?? "USD",
+    display: input.displayCurrency ?? "USD",
+    rate: input.fxRate ?? null,
+  };
+  return viewMoney(value, view, input.now ?? new Date());
+}
+
 export function buildLiveState(input: BuildStateInput): string {
   const asOf = bucketTime(input.now).toISOString().slice(0, 16).replace("T", " ");
 
   return `LIVE STATE (as of ${asOf} UTC)
 
-PROGRAMME: month ${input.programMonth} of 18 · open pipeline $${input.pipelineValue} · closed $${input.closedValue} · target $${input.target}
+PROGRAMME: month ${input.programMonth} of 18 · open pipeline ${money(input, input.pipelineValue)} · closed ${money(input, input.closedValue)} · target ${money(input, input.target)}
+CURRENCY: write money in ${input.displayCurrency ?? "USD"}. The figures above are already in it.
 
 PARTNERS BY TOWER: ${Object.entries(input.partnersByTower).map(([t, p]) => `${t}=${p}`).join(" · ")}
 

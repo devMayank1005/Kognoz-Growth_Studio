@@ -6,6 +6,9 @@ import { loadPipeline } from "@/db/queries";
 import { settings } from "@/db/schema";
 import { byGeography, bySolution, byStage, byTower, curveSeries, openTotal, type PanelRow } from "@/domain/dashboard";
 import { requireSession } from "@/lib/session";
+import { loadMoneyView } from "@/lib/money-view";
+import { viewMoney, type MoneyView } from "@/domain/money";
+import { PROGRAM_TARGET } from "@/domain/revenue";
 import { eq } from "drizzle-orm";
 
 /**
@@ -17,6 +20,7 @@ import { eq } from "drizzle-orm";
  */
 export default async function DashboardPage() {
   const session = await requireSession();
+  const money = await loadMoneyView(session.orgId);
   const [pipeline, cfg] = await Promise.all([
     loadPipeline(session.orgId),
     db.select({ programStart: settings.programStart }).from(settings).where(eq(settings.orgId, session.orgId)).limit(1),
@@ -32,37 +36,47 @@ export default async function DashboardPage() {
     <div className="px-6 py-8">
       <div className="mb-6 flex items-baseline gap-3">
         <h1 className="font-display text-xl tracking-tight text-body">Dashboard</h1>
-        <span className="num text-[13px] text-muted">{fmt(total)} open</span>
+        <span className="num text-[13px] text-muted">{viewMoney(total, money)} open</span>
       </div>
 
       <section className="mb-8">
-        <h2 className="mb-2 text-[11px] uppercase tracking-wide text-faint">$20M in 18 months</h2>
-        <CurveChart points={curve} />
+        {/* The programme target is a USD commitment (PRD §0); the heading
+            renders it in whatever the operator is reading, so the curve's axis
+            and its title cannot disagree. */}
+        <h2 className="mb-2 text-[11px] uppercase tracking-wide text-faint">
+          {viewMoney(PROGRAM_TARGET, money)} in 18 months
+        </h2>
+        <CurveChart points={curve} money={money} />
       </section>
 
       <div className="grid gap-8 lg:grid-cols-2">
-        <Panel title="By tower" rows={byTower(pipeline)} total={total} showTarget />
-        <Panel title="By geography" rows={byGeography(pipeline)} total={total} />
-        <Panel title="By solution" rows={bySolution(pipeline)} total={total} />
-        <Panel title="By stage" rows={byStage(pipeline)} total={total} />
+        <Panel title="By tower" rows={byTower(pipeline)} total={total} showTarget money={money} />
+        <Panel title="By geography" rows={byGeography(pipeline)} total={total} money={money} />
+        <Panel title="By solution" rows={bySolution(pipeline)} total={total} money={money} />
+        <Panel title="By stage" rows={byStage(pipeline)} total={total} money={money} />
       </div>
 
       <p className="mt-8 text-[11px] text-faint">
-        Every panel totals {fmt(total)} — the same open pipeline, partitioned four ways.
+        Every panel totals {viewMoney(total, money)} — the same open pipeline, partitioned four ways.
       </p>
     </div>
   );
 }
 
-function Panel({ title, rows, total, showTarget }: { title: string; rows: PanelRow[]; total: number; showTarget?: boolean }) {
+function Panel({
+  title, rows, total, showTarget, money,
+}: {
+  title: string; rows: PanelRow[]; total: number; showTarget?: boolean; money: MoneyView;
+}) {
   const sum = rows.reduce((n, r) => n + r.value, 0);
   return (
     <section>
       <h2 className="mb-2 flex items-baseline gap-2 text-[11px] uppercase tracking-wide text-faint">
         {title}
-        <span className="num normal-case tracking-normal">{fmt(sum)}</span>
+        <span className="num normal-case tracking-normal">{viewMoney(sum, money)}</span>
       </h2>
-      <PanelChart rows={rows.filter((r) => r.value > 0).map((r) => ({ name: r.label, value: Math.round(r.value / 1000) }))} />
+      <PanelChart rows={rows.filter((r) => r.value > 0).map((r) => ({ name: r.label, value: r.value }))}
+        money={money} />
       <table className="mt-2 w-full border-collapse text-left">
         <tbody>
           {rows.map((r) => (
@@ -73,10 +87,10 @@ function Panel({ title, rows, total, showTarget }: { title: string; rows: PanelR
                   {r.label}
                 </Link>
               </td>
-              <td className="num h-row px-1 text-right text-body">{fmt(r.value)}</td>
+              <td className="num h-row px-1 text-right text-body">{viewMoney(r.value, money)}</td>
               {showTarget && (
                 <td className="num h-row px-1 text-right text-faint">
-                  {r.target ? `of ${fmt(r.target)}` : ""}
+                  {r.target ? `of ${viewMoney(r.target, money)}` : ""}
                 </td>
               )}
               <td className="h-row w-24 px-1">
@@ -92,8 +106,3 @@ function Panel({ title, rows, total, showTarget }: { title: string; rows: PanelR
   );
 }
 
-function fmt(n: number) {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
-  return `$${n}`;
-}

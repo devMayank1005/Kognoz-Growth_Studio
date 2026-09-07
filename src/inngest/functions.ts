@@ -50,6 +50,22 @@ export const dailySweep = inngest.createFunction(
       return row;
     });
 
+    /**
+     * Refresh the USD -> INR rate before anything that might price a deal.
+     *
+     * Folded into this job rather than given its own cron: it is one number,
+     * it shares this function's retry and single-flight guard, and a separate
+     * schedule for it would be scaffolding. A failure is not fatal — the
+     * previous rate stays, and its AGE is what surfaces the problem, because
+     * `convertAmount` refuses once that age passes three days.
+     */
+    await step.run("refresh-fx", async () => {
+      const { refreshFxRate } = await import("@/lib/fx");
+      const result = await refreshFxRate(org.id);
+      console.log(`[fx] ${result.status}${result.rate ? ` USD->INR ${result.rate}` : ""}`);
+      return result;
+    });
+
     const plan = await step.run("plan-sweeps", async () => {
       const universe = await loadUniverse(org.id);
       const [cfg] = await db

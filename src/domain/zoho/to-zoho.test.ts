@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LEAD_SOURCE, NO_NAMED_CONTACT } from "./fields";
 import { assertNoContactData } from "./forbidden";
 import {
-  closingDateFor, dealName, packDealDescription, packLeadDescription,
+  buildDeal, closingDateFor, dealName, packDealDescription, packLeadDescription,
   pushActionFor, splitPersonName, toDeal, toLead, zohoTargetFor,
 } from "./to-zoho";
 import type { SyncCard } from "./types";
@@ -169,5 +169,55 @@ describe("descriptions", () => {
     expect(sparse).toBe("T2 · Rahul Menon");
     expect(sparse.startsWith(" · ")).toBe(false);
     expect(sparse.endsWith(" · ")).toBe(false);
+  });
+});
+
+describe("buildDeal — the currency boundary", () => {
+  const rate = { usdToInr: 832_150, updatedAt: new Date("2026-09-06T00:00:00Z") };
+  const ctx = { today: TODAY, base: "USD" as const, target: "INR" as const, rate };
+
+  /**
+   * The whole reason this exists: the connected Zoho org is in rupees, and a
+   * $300,000 card pushed unconverted would sit in the client's CRM as
+   * ₹300,000 — about $3,600 — with nothing about it looking wrong.
+   */
+  it("converts the Amount into the CRM's currency", () => {
+    const r = buildDeal(card({ stage: "Proposal", value: 300_000 }), ctx);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.payload.Amount).toBe(24_964_500);
+    expect(r.payload.Amount).not.toBe(300_000);
+  });
+
+  it("leaves the Amount alone when the CRM is already in the base currency", () => {
+    const r = buildDeal(card({ stage: "Proposal", value: 300_000 }), {
+      ...ctx, target: "USD", rate: null,
+    });
+    expect(r.ok && r.payload.Amount).toBe(300_000);
+  });
+
+  it("REFUSES rather than shipping a wrong number when the rate is stale", () => {
+    const r = buildDeal(card({ stage: "Proposal" }), {
+      ...ctx, rate: { ...rate, updatedAt: new Date("2026-08-01T00:00:00Z") },
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toBe("stale-rate");
+  });
+
+  it("REFUSES when no rate is set at all", () => {
+    const r = buildDeal(card({ stage: "Proposal" }), { ...ctx, rate: null });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("no-rate");
+  });
+
+  it("keeps every other field identical to toDeal", () => {
+    const c = card({ stage: "Meeting set", nextStep: "Send the pack", dueOn: "2026-11-01" });
+    const built = buildDeal(c, ctx);
+    const plain = toDeal(c, TODAY);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    // Only the Amount differs — the conversion must not disturb the mapping.
+    expect({ ...built.payload, Amount: 0 }).toEqual({ ...plain, Amount: 0 });
   });
 });

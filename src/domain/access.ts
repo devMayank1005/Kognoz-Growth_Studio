@@ -46,3 +46,24 @@ export function parseAllowedDomains(raw: string | null | undefined): string[] {
     .map((d) => d.trim().toLowerCase().replace(/^@/, ""))
     .filter(Boolean);
 }
+
+/** The four roles from PRD §1, mirrored here so this module stays I/O-free. */
+export type AccessRole = "operator" | "partner" | "viewer" | "admin";
+
+/**
+ * Who may wire this workspace to an external system.
+ *
+ * PRD §2 gives Admin "Settings: partners, towers, ICP, radar markets, Zoho",
+ * and gives Operator "keep Zoho true". **Operator is included deliberately**:
+ * `DEFAULT_ROLE` in `src/lib/session.ts` is "operator" and nothing in the
+ * codebase ever writes "admin", so gating on admin alone would lock every
+ * existing user — including the founder — out of the Connect button, and it
+ * would present as a broken feature rather than as a permission decision.
+ *
+ * Partners and viewers are excluded: connecting acts on the live CRM.
+ *
+ * One place to tighten the moment a real admin role exists.
+ */
+export function canManageIntegrations(role: AccessRole | string): boolean {
+  return role === "admin" || role === "operator";
+}

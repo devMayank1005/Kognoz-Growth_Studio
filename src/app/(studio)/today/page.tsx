@@ -4,6 +4,7 @@ import { amsWindows, dueNow, withPartnerTooLong, PARTNER_SILENCE_DAYS } from "@/
 
 import { AmsRow, DueRow, NudgeRow } from "@/components/studio/today-rows";
 import { requireSession } from "@/lib/session";
+import { loadMoneyView } from "@/lib/money-view";
 
 /**
  * Today (PRD §9.9) — "the Monday review's first screen".
@@ -13,6 +14,7 @@ import { requireSession } from "@/lib/session";
  */
 export default async function TodayPage() {
   const session = await requireSession();
+  const money = await loadMoneyView(session.orgId);
 
   const [pipeline, universe, signals, dnc] = await Promise.all([
     loadPipeline(session.orgId),
@@ -77,7 +79,7 @@ export default async function TodayPage() {
 
       <Section title="AMS windows opening" count={ams.length} empty="No AMS windows open right now.">
         {ams.slice(0, 10).map((t) => (
-          <AmsRow key={t.name} target={t} meta={`HCM live ~${Math.round(t.ageDays / 30)} months`} />
+          <AmsRow key={t.name} target={t} meta={`HCM live ~${Math.round(t.ageDays / 30)} months`} money={money} />
         ))}
       </Section>
     </div>

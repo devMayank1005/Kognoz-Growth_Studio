@@ -6,6 +6,8 @@ import { practiceById, practicesForSignal } from "@/domain/practices";
 import { DismissSignal } from "@/components/studio/dismiss-signal";
 import { signalByCode } from "@/domain/signals";
 import { requireSession } from "@/lib/session";
+import { loadMoneyView } from "@/lib/money-view";
+import { viewMoney } from "@/domain/money";
 
 /**
  * The account dossier (PRD §9.9): Why now · The play · Who · Timeline · Actions.
@@ -16,6 +18,7 @@ import { requireSession } from "@/lib/session";
  */
 export default async function AccountPage(props: PageProps<"/accounts/[id]">) {
   const session = await requireSession();
+  const money = await loadMoneyView(session.orgId);
   const { id } = await props.params;
 
   const dossier = await loadAccountDossier(session.orgId, id);
@@ -133,7 +136,7 @@ export default async function AccountPage(props: PageProps<"/accounts/[id]">) {
               <li key={c.id} className="flex items-baseline gap-2 text-[13px]">
                 <span className="text-body">{practiceById(c.practiceId)?.name ?? c.practiceId}</span>
                 <span className="text-muted">{c.stage}</span>
-                <span className="num ml-auto text-body">${Math.round(c.value / 1000)}K</span>
+                <span className="num ml-auto text-body">{viewMoney(c.value, money)}</span>
                 <span className="text-faint">{c.partner ?? "—"}</span>
               </li>
             ))}

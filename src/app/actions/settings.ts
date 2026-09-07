@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { db } from "@/db/client";
 import { activities, dnc, partnerTowers, settings, user } from "@/db/schema";
+import { rateFromDecimal } from "@/domain/money";
 import { TOWER_KEYS } from "@/domain/practices";
 import { requireSession } from "@/lib/session";
 
@@ -65,6 +66,81 @@ export async function saveOrgSettings(input: unknown) {
   }
 
   await db.update(settings).set(parsed.data).where(eq(settings.orgId, session.orgId));
+  revalidatePath("/settings");
+  return { ok: true as const };
+}
+
+/* ---------------------------------------------------------- currency (§5) */
+
+/**
+ * Which currency the interface renders in.
+ *
+ * Display only — no stored value moves, and the tier thresholds stay in the
+ * base currency, so a $300K card still routes as core whichever way this is set.
+ */
+export async function saveDisplayCurrency(input: unknown) {
+  const session = await requireSession();
+  const parsed = z.enum(["USD", "INR"]).safeParse(input);
+  if (!parsed.success) return { ok: false as const, message: "Unknown currency." };
+
+  await db
+    .update(settings)
+    .set({ displayCurrency: parsed.data })
+    .where(eq(settings.orgId, session.orgId));
+
+  // Every studio route renders money, so the whole segment is stale.
+  revalidatePath("/", "layout");
+  return { ok: true as const };
+}
+
+/* -------------------------------------------------------- the FX rate (§5) */
+
+/**
+ * The USD -> INR rate used when pushing amounts to a rupee CRM.
+ *
+ * Setting one by hand also sets `fxManualOverride`, which makes the daily fetch
+ * SKIP. Without that, a rate typed in the morning would be silently replaced
+ * overnight — which is precisely the failure an override exists to prevent.
+ */
+export async function saveFxRate(input: unknown) {
+  const session = await requireSession();
+
+  const parsed = z
+    .number()
+    .positive("The rate must be greater than zero.")
+    // A sanity band, not a forecast. A fat-fingered 8321 instead of 83.21
+    // would understate every deal by 100x and look perfectly plausible in the
+    // CRM, which is exactly the class of error this whole module exists for.
+    .min(1, "That rate looks wrong — USD to INR is a number in the tens.")
+    .max(1000, "That rate looks wrong — USD to INR is a number in the tens.")
+    .safeParse(typeof input === "string" ? Number(input) : input);
+
+  if (!parsed.success) {
+    return { ok: false as const, message: parsed.error.issues[0]?.message ?? "Not a valid rate." };
+  }
+
+  await db
+    .update(settings)
+    .set({
+      fxUsdInr: rateFromDecimal(parsed.data),
+      fxUpdatedAt: new Date(),
+      fxSource: "manual",
+      fxManualOverride: true,
+    })
+    .where(eq(settings.orgId, session.orgId));
+
+  revalidatePath("/settings");
+  return { ok: true as const };
+}
+
+/** Hands the rate back to the daily fetch. The last manual value stays until
+ *  the next fetch replaces it — clearing the override must not clear the rate. */
+export async function clearFxOverride() {
+  const session = await requireSession();
+  await db
+    .update(settings)
+    .set({ fxManualOverride: false })
+    .where(eq(settings.orgId, session.orgId));
   revalidatePath("/settings");
   return { ok: true as const };
 }

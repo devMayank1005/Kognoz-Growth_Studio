@@ -20,6 +20,7 @@ import { TOUCH_CAP, defaultDraftKind } from "@/domain/touches";
 import { useSelection } from "@/store/selection";
 import { cn } from "@/lib/cn";
 import type { PipelineCardRow } from "@/db/queries";
+import { formatCompact, viewMoney, type MoneyView } from "@/domain/money";
 
 /**
  * The inspector (PRD §9.9): the selected card as an aligned key-value block,
@@ -28,8 +29,6 @@ import type { PipelineCardRow } from "@/db/queries";
  * Nothing selected keeps the snapshot — an empty panel teaches nothing (§9.7).
  */
 
-const fmtValue = (n: number) =>
-  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `$${Math.round(n / 1_000)}K`;
 
 type Timeline = Awaited<ReturnType<typeof loadTimeline>>;
 
@@ -39,12 +38,14 @@ export function InspectorPanel({
   openValue = 0,
   pendingZoho = 0,
   zohoConnected = false,
+  money,
 }: {
   dueToday?: PipelineCardRow[];
   recent?: PipelineCardRow[];
   openValue?: number;
   pendingZoho?: number;
   zohoConnected?: boolean;
+  money: MoneyView;
 }) {
   const card = useSelection((s) => s.card);
 
@@ -56,6 +57,7 @@ export function InspectorPanel({
         openValue={openValue}
         pendingZoho={pendingZoho}
         zohoConnected={zohoConnected}
+        money={money}
       />
     );
   }
@@ -73,6 +75,7 @@ function Snapshot({
   openValue,
   pendingZoho,
   zohoConnected = false,
+  money,
 }: {
   dueToday: PipelineCardRow[];
   recent: PipelineCardRow[];
@@ -80,6 +83,7 @@ function Snapshot({
   pendingZoho: number;
   /** False until the connection layer lands. */
   zohoConnected?: boolean;
+  money: MoneyView;
 }) {
   const select = useSelection((s) => s.select);
 
@@ -102,7 +106,7 @@ function Snapshot({
               >
                 <span className="min-w-0 flex-1 truncate text-[13px] text-body">{c.account}</span>
                 <span className="num shrink-0 text-[11px] text-faint">
-                  ${Math.round(c.value / 1000)}K
+                  {viewMoney(c.value, money)}
                 </span>
               </button>
             </li>
@@ -117,7 +121,7 @@ function Snapshot({
       <div>
         <h2 className="font-display text-[13px] text-body">Snapshot</h2>
         <p className="num mt-0.5 text-[13px] text-muted">
-          ${(openValue / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M open
+          {viewMoney(openValue, money)} open
         </p>
       </div>
 
@@ -153,10 +157,16 @@ function Snapshot({
 // Keyed by card id so selecting a different card remounts this and clears the
   // in-progress draft and timeline. Resetting that state inside an effect would
   // cascade an extra render for no benefit.
-  return <CardInspector key={card.id} card={card} />;
+  return <CardInspector key={card.id} card={card} money={money} />;
 }
 
-function CardInspector({ card }: { card: NonNullable<ReturnType<typeof useSelection.getState>["card"]> }) {
+function CardInspector({
+  card,
+  money,
+}: {
+  card: NonNullable<ReturnType<typeof useSelection.getState>["card"]>;
+  money: MoneyView;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ id: string; subject: string; body: string; mailto: string } | null>(null);
   const [timeline, setTimeline] = useState<Timeline>([]);
@@ -317,7 +327,7 @@ function CardInspector({ card }: { card: NonNullable<ReturnType<typeof useSelect
       </div>
 
       <dl className="space-y-1">
-        <ValueField card={card} onSaved={applyPatch} />
+        <ValueField card={card} onSaved={applyPatch} money={money} />
         <Field label="Solution" value={practiceById(card.practiceId)?.name ?? card.practiceId} />
         <Field label="Stage" value={card.stage} />
         <Field label="Partner" value={card.partner} />
@@ -415,9 +425,11 @@ function CardInspector({ card }: { card: NonNullable<ReturnType<typeof useSelect
 function ValueField({
   card,
   onSaved,
+  money,
 }: {
   card: PipelineCardRow;
   onSaved: (patch: Partial<CardPatch>) => void;
+  money: MoneyView;
 }) {
   const [editing, setEditing] = useState(false);
   const [thousands, setThousands] = useState(String(Math.round(card.value / 1000)));
@@ -438,7 +450,7 @@ function ValueField({
       setTier(r.tier);
       setEditing(false);
       onSaved({});
-      toast.success(`${card.account} is now ${fmtValue(r.value)}`, {
+      toast.success(`${card.account} is now ${formatCompact(r.value, money.base)}`, {
         description: `${r.tier}${r.whale ? " · whale" : ""}`,
       });
     } catch {
@@ -453,7 +465,7 @@ function ValueField({
       <div className="flex items-baseline gap-2">
         <dt className="w-24 shrink-0 text-[11px] text-faint">Value</dt>
         <dd className="num flex-1 text-[13px] text-body">
-          {fmtValue(value)} · {tier}
+          {viewMoney(value, money)} · {tier}
         </dd>
         <button
           type="button"

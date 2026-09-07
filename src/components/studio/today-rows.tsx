@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { addCard } from "@/app/actions/add-card";
 import { dispatchPacket } from "@/app/actions/card-actions";
 import type { PipelineCardRow } from "@/db/queries";
+import { viewMoney, type MoneyView } from "@/domain/money";
 import { practiceForTarget } from "@/domain/practices";
 import type { Target } from "@/domain/scoring";
 import { useSelection, useWorkspace } from "@/store/selection";
@@ -112,7 +113,7 @@ export function NudgeRow({ card, meta }: { card: PipelineCardRow; meta?: string 
 }
 
 /** AMS windows opening — adds the target as a routed card. */
-export function AmsRow({ target, meta }: { target: Target; meta?: string }) {
+export function AmsRow({ target, meta, money }: { target: Target; meta?: string; money: MoneyView }) {
   const [state, setState] = useState<"idle" | "busy" | "added">("idle");
   const practice = practiceForTarget(target);
 
@@ -149,7 +150,7 @@ export function AmsRow({ target, meta }: { target: Target; meta?: string }) {
             }
             setState("added");
             toast.success(`${r.account} added`, {
-              description: `${r.practice} · ${r.tower} · ${r.partner} · $${Math.round(r.value / 1000)}K`,
+              description: `${r.practice} · ${r.tower} · ${r.partner} · ${viewMoney(r.value, money)}`,
             });
           } catch {
             setState("idle");

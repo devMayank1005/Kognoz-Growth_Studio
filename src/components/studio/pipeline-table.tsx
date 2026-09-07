@@ -5,6 +5,7 @@ import { useEffect, useRef, useCallback } from "react";
 import type { PipelineCardRow } from "@/db/queries";
 import { practiceById } from "@/domain/practices";
 import { syncStatusOf, type SyncStatus } from "@/domain/zoho/status";
+import { viewMoney, type MoneyView } from "@/domain/money";
 import { useSelection, useWorkspace } from "@/store/selection";
 import { cn } from "@/lib/cn";
 
@@ -27,20 +28,20 @@ const STAGE_WORD: Record<string, string> = {
   "Lost": "Closed",
 };
 
-const fmtValue = (n: number) =>
-  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `$${Math.round(n / 1_000)}K`;
 
 export function PipelineTable({
   cards,
   highlightId,
   onSelect,
   zohoConnected = false,
+  money,
 }: {
   cards: PipelineCardRow[];
   highlightId?: string;
   onSelect?: (card: PipelineCardRow) => void;
   /** False until the connection lands, so the column stops implying a sync. */
   zohoConnected?: boolean;
+  money: MoneyView;
 }) {
   const active = useWorkspace((s) => s.cursor);
   const setActive = useWorkspace((s) => s.setCursor);
@@ -146,7 +147,7 @@ export function PipelineTable({
                   {STAGE_WORD[c.stage] ?? c.stage}
                 </span>
               </td>
-              <td className="num h-row px-2 text-right text-body">{fmtValue(c.value)}</td>
+              <td className="num h-row px-2 text-right text-body">{viewMoney(c.value, money)}</td>
               <td className="h-row px-2 text-muted">{c.partner}</td>
               <td className="h-row px-2 text-muted">
                 {c.contact || <span className="text-faint">to identify</span>}

@@ -17,6 +17,7 @@ import {
   type ConversationTurn,
 } from "@/db/conversations";
 import { getStudioSession } from "@/lib/session";
+import { loadMoneyView } from "@/lib/money-view";
 import { titleFromText } from "@/lib/titles";
 import { eq } from "drizzle-orm";
 
@@ -152,6 +153,7 @@ export async function POST(request: Request) {
         });
 
         const programMonth = settingsRow[0] ? monthOf(settingsRow[0].programStart) : 1;
+        const money = await loadMoneyView(session.orgId);
         const openValue = pipeline
           .filter((c) => !["Won", "Lost"].includes(c.stage))
           .reduce((sum, c) => sum + c.value, 0);
@@ -218,6 +220,12 @@ export async function POST(request: Request) {
           pipelineValue: openValue,
           closedValue,
           target: Math.round(curveTarget(programMonth)) || PROGRAM_TARGET,
+          // So the model's prose matches the screen the operator is reading.
+          // Note this changes the cached prompt prefix, so the first request
+          // after a currency switch misses the prompt cache once.
+          baseCurrency: money.base,
+          displayCurrency: money.display,
+          fxRate: money.rate,
         });
 
         send("state", { source: "engine", targets: targets.length, budget });

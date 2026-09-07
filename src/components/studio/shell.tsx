@@ -16,6 +16,7 @@ import { UserMenu, type StudioUser } from "@/components/studio/user-menu";
 import { ThemeToggle } from "@/components/studio/theme-toggle";
 import { formatClock } from "@/lib/clock";
 import { cn } from "@/lib/cn";
+import { viewMoney, type MoneyView } from "@/domain/money";
 import { useWorkspace } from "@/store/selection";
 
 /* §2 — the rail. Order matters: it is the operator's daily loop, top to
@@ -125,6 +126,7 @@ export function TopBar({
   dueToday = 0,
   pendingZoho = 0,
   user,
+  money,
 }: {
   month?: number;
   open?: number;
@@ -133,6 +135,8 @@ export function TopBar({
   dueToday?: number;
   pendingZoho?: number;
   user?: StudioUser;
+  /** Resolved server-side, so the first paint is already in the right currency. */
+  money: MoneyView;
 }) {
   const behind = closed < pace;
   // Read straight from the store rather than taking a callback: the studio
@@ -146,12 +150,12 @@ export function TopBar({
         <Wordmark />
       </span>
       <Stat label="Month" value={`${month}/18`} />
-      <Stat label="Open" value={fmtMoney(open)} />
+      <Stat label="Open" value={viewMoney(open, money)} />
       <Stat
         label="Closed vs pace"
-        value={fmtMoney(closed)}
+        value={viewMoney(closed, money)}
         tone={behind ? "amber" : "won"}
-        hint={`pace ${fmtMoney(pace)}`}
+        hint={`pace ${viewMoney(pace, money)}`}
       />
       <Stat label="Due today" value={String(dueToday)} tone={dueToday > 0 ? "amber" : undefined} />
 
@@ -215,12 +219,15 @@ export function StatusLine({
   triggersToday = 0,
   lastSweepAt,
   lastZohoSync,
+  zohoConnected = false,
   error,
 }: {
   sweep?: { done: number; total: number };
   triggersToday?: number;
   lastSweepAt?: string | null;
   lastZohoSync?: string;
+  /** Distinguishes "connected, nothing synced yet" from "not connected". */
+  zohoConnected?: boolean;
   error?: string;
 }) {
   const sweeping = sweep && sweep.done < sweep.total;
@@ -247,7 +254,13 @@ export function StatusLine({
             : "No sweep yet today"}
       </span>
       <span className="num">{triggersToday} triggers today</span>
-      <span>Zoho {lastZohoSync ? `synced ${lastZohoSync}` : "not connected"}</span>
+      {/* Three states, not two: "connected but nothing has synced yet" read as
+          "not connected", which is wrong the moment the CRM is actually wired
+          up and no push has run. */}
+      <span>
+        Zoho{" "}
+        {lastZohoSync ? `synced ${lastZohoSync}` : zohoConnected ? "connected" : "not connected"}
+      </span>
       {error && <span className="text-danger">{error}</span>}
 
       {/* Appearance lives at the far right of the strip: always reachable,
@@ -315,8 +328,3 @@ export function StudioShell({
   );
 }
 
-function fmtMoney(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
-  return `$${n}`;
-}

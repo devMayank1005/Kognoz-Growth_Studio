@@ -7,6 +7,9 @@ import dynamic from "next/dynamic";
  */
 const Kanban = dynamic(() => import("@/components/studio/kanban").then((m) => m.Kanban));
 import { PipelineTable } from "@/components/studio/pipeline-table";
+import { loadZohoStatus } from "@/db/zoho";
+import { loadMoneyView } from "@/lib/money-view";
+import { viewMoney } from "@/domain/money";
 import { QuickAdd } from "@/components/studio/quick-add";
 import { loadPipeline, type PipelineCardRow } from "@/db/queries";
 import { practiceById, TOWERS } from "@/domain/practices";
@@ -20,6 +23,8 @@ import { requireSession } from "@/lib/session";
  */
 export default async function PipelinePage(props: PageProps<"/pipeline">) {
   const session = await requireSession();
+  const zohoConnected = (await loadZohoStatus(session.orgId)).status === "connected";
+  const money = await loadMoneyView(session.orgId);
   const params = await props.searchParams;
 
   const filter = readFilter(params);
@@ -46,7 +51,7 @@ export default async function PipelinePage(props: PageProps<"/pipeline">) {
       <div className="mb-5 flex flex-wrap items-baseline gap-3">
         <h1 className="font-display text-xl tracking-tight text-body">Pipeline</h1>
         <span className="num text-[13px] text-muted">
-          {cards.length} card{cards.length === 1 ? "" : "s"} · ${Math.round(open / 1000)}K open
+          {cards.length} card{cards.length === 1 ? "" : "s"} · {viewMoney(open, money)} open
         </span>
 
         <span className="ml-auto flex gap-1 text-[11px]">
@@ -78,10 +83,14 @@ export default async function PipelinePage(props: PageProps<"/pipeline">) {
       </div>
 
       <div className="mb-3">
-        <QuickAdd />
+        <QuickAdd money={money} />
       </div>
 
-      {isKanban ? <Kanban cards={cards} /> : <PipelineTable cards={cards} />}
+      {isKanban ? (
+        <Kanban cards={cards} money={money} />
+      ) : (
+        <PipelineTable cards={cards} zohoConnected={zohoConnected} money={money} />
+      )}
 
       {filter && cards.length === 0 && (
         <p className="prose-chat mt-4 text-muted">

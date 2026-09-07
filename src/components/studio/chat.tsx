@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { addCard } from "@/app/actions/add-card";
 import type { ConversationSummary, ConversationTurn } from "@/db/conversations";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
+import { formatCompact, type MoneyView } from "@/domain/money";
 import { runSweep } from "@/lib/run-sweep";
 import { useWorkspace } from "@/store/selection";
 
@@ -62,7 +63,7 @@ async function runAddIntent(action: { company: string; solution?: string; value?
   );
 
   if (result.ok) {
-    const summary = `${result.practice} · ${result.tower} · ${result.partner} · $${Math.round(result.value / 1000)}K · Tagged`;
+    const summary = `${result.practice} · ${result.tower} · ${result.partner} · ${formatCompact(result.value, "USD")} · Tagged`;
     toast.success(`${result.account} added`, { description: summary });
     return `Added ${result.account} — ${summary}.`;
   }
@@ -81,11 +82,13 @@ export function Chat({
   conversations,
   conversationId,
   initialTurns,
+  money,
 }: {
   conversations: ConversationSummary[];
   /** Null only for an operator who has never asked anything. */
   conversationId: string | null;
   initialTurns: ConversationTurn[];
+  money: MoneyView;
 }) {
   const params = useSearchParams();
   const router = useRouter();
@@ -353,7 +356,7 @@ export function Chat({
 
           <AnimatePresence initial={false}>
             {turns.map((turn) => (
-              <TurnView key={turn.id} turn={turn} />
+              <TurnView key={turn.id} turn={turn} money={money} />
             ))}
           </AnimatePresence>
           <div ref={endRef} />
@@ -396,7 +399,7 @@ export function Chat({
  * so every other turn keeps its identity and this re-render is skipped. Without
  * it, a 200-turn thread re-rendered every Motion component on every token.
  */
-const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
+const TurnView = memo(function TurnView({ turn, money }: { turn: Turn; money: MoneyView }) {
   if (turn.role === "user") {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-6 flex justify-end">
@@ -426,7 +429,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
         {!turn.text && !turn.progress && !turn.error && <p className="text-[13px] text-faint">…</p>}
         {turn.chart && <EngineChartBlock chart={turn.chart} />}
         {turn.awaitingRows && turn.text && <RowSkeleton />}
-        {turn.rows && turn.rows.length > 0 && <ActionTable rows={turn.rows} />}
+        {turn.rows && turn.rows.length > 0 && <ActionTable rows={turn.rows} money={money} />}
         {turn.error && <p className="mt-2 text-[13px] text-amber">{turn.error}</p>}
       </div>
     </motion.div>

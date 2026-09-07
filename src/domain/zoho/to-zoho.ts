@@ -6,6 +6,7 @@
  * looks wrong in Zoho.
  */
 
+import { convertAmount, type Currency, type FxRate } from "../money";
 import type { Stage } from "../routing";
 import {
   DEAL_NAME_MAX,
@@ -146,10 +147,46 @@ export function toLead(card: SyncCard, leadSource = LEAD_SOURCE): ZohoLeadPayloa
   return payload;
 }
 
+/** What a Deal payload needs beyond the card itself. */
+export interface DealContext {
+  today: Date;
+  /** The currency Growth Studio's values are in. */
+  base: Currency;
+  /** The connected Zoho org's currency. */
+  target: Currency;
+  rate: FxRate | null;
+  leadSource?: string;
+}
+
+export type DealResult =
+  | { ok: true; payload: ZohoDealPayload }
+  /** The amount could not be priced. Never a payload with a wrong number in it. */
+  | { ok: false; reason: string; message: string };
+
+/**
+ * Builds a Deal, converting the Amount into the CRM's currency.
+ *
+ * Returns a refusal rather than a payload when the amount cannot be priced —
+ * no rate, or a rate too old to trust. That is deliberate: a card that fails to
+ * sync is a visible problem the operator can act on, whereas a deal sitting in
+ * the client's CRM at 1/83rd of its value is invisible until someone builds a
+ * board pack out of it.
+ */
+export function buildDeal(card: SyncCard, ctx: DealContext): DealResult {
+  const amount = convertAmount(card.value, ctx.base, ctx.target, ctx.rate, ctx.today);
+  if (!amount.ok) return { ok: false, reason: amount.reason, message: amount.message };
+
+  const payload = toDeal(card, ctx.today, ctx.leadSource ?? LEAD_SOURCE);
+  payload.Amount = amount.amount;
+  return { ok: true, payload };
+}
+
 export function toDeal(card: SyncCard, today: Date, leadSource = LEAD_SOURCE): ZohoDealPayload {
   const payload: ZohoDealPayload = {
     Deal_Name: dealName(card.account, card.practiceName),
     Stage: zohoStageFor(card.stage),
+    // The card's own value, in the BASE currency. `buildDeal` is what converts
+    // it — call that, not this, on any path that reaches Zoho.
     Amount: card.value,
     Closing_Date: closingDateFor(card, today),
     Description: packDealDescription(card),

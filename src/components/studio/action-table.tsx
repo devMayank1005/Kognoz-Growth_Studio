@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { addCard } from "@/app/actions/add-card";
+import { formatCompact, viewMoney, type MoneyView } from "@/domain/money";
 import { generateDraft } from "@/app/actions/card-actions";
 import type { EngineRow } from "@/engine/schemas";
 import { cn } from "@/lib/cn";
@@ -17,12 +18,10 @@ import { cn } from "@/lib/cn";
  * and the row resets, with the reason stated plainly rather than swallowed.
  */
 
-const fmtValue = (n: number) =>
-  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : `$${Math.round(n / 1_000)}K`;
 
 type RowState = "idle" | "adding" | "added" | "blocked";
 
-export function ActionTable({ rows, onAdded }: { rows: EngineRow[]; onAdded?: () => void }) {
+export function ActionTable({ rows, onAdded, money }: { rows: EngineRow[]; onAdded?: () => void; money: MoneyView }) {
   const [state, setState] = useState<Record<number, RowState>>({});
   const [added, setAdded] = useState<Record<number, string>>({});
   const [drafting, setDrafting] = useState<number | null>(null);
@@ -39,7 +38,7 @@ export function ActionTable({ rows, onAdded }: { rows: EngineRow[]; onAdded?: ()
         // and without it they had to leave chat and hunt for the row.
         setAdded((a) => ({ ...a, [index]: result.id }));
         toast.success(`${result.account} added`, {
-          description: `${result.practice} · ${result.tower} · ${result.partner} · ${fmtValue(result.value)}`,
+          description: `${result.practice} · ${result.tower} · ${result.partner} · ${formatCompact(result.value, money.base)}`,
         });
         onAdded?.();
       } else {
@@ -102,7 +101,7 @@ export function ActionTable({ rows, onAdded }: { rows: EngineRow[]; onAdded?: ()
                     </a>
                   )}
                 </td>
-                <td className="num h-row px-2 py-1.5 text-right text-body">{fmtValue(row.value)}</td>
+                <td className="num h-row px-2 py-1.5 text-right text-body">{viewMoney(row.value, money)}</td>
                 <td className="h-row px-2 py-1.5 text-right">
                   <button
                     type="button"

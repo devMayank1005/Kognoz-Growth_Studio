@@ -36,6 +36,27 @@
       "when": 1788515601848,
       "tag": "0004_white_pet_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788767205957,
+      "tag": "0005_real_matthew_murdock",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788772636799,
+      "tag": "0006_noisy_leo",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788775482524,
+      "tag": "0007_lame_lionheart",
+      "breakpoints": true
     }
   ]
 }

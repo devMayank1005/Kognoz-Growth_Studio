@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Chat } from "@/components/studio/chat";
 import { listConversations, loadConversation } from "@/db/conversations";
 import { requireSession } from "@/lib/session";
+import { loadMoneyView } from "@/lib/money-view";
 
 export default async function ChatPage({ searchParams }: PageProps<"/chat">) {
   // History is loaded here rather than by a fetch in the component's mount
@@ -12,6 +13,7 @@ export default async function ChatPage({ searchParams }: PageProps<"/chat">) {
   const { c } = await searchParams;
 
   const conversations = await listConversations(session.orgId, session.userId);
+  const money = await loadMoneyView(session.orgId);
 
   // `?c=` names the conversation; anything unknown falls back to the first,
   // which is the pinned brief when there is one. A brand-new operator has no
@@ -29,6 +31,7 @@ export default async function ChatPage({ searchParams }: PageProps<"/chat">) {
         conversations={conversations}
         conversationId={selectedId}
         initialTurns={selected?.turns ?? []}
+        money={money}
       />
     </Suspense>
   );

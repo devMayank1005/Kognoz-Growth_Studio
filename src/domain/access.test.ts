@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAllowedEmailDomain, parseAllowedDomains } from "./access";
+import { canManageIntegrations, isAllowedEmailDomain, parseAllowedDomains } from "./access";
 
 const ALLOWED = ["kognozconsulting.com"];
 
@@ -88,5 +88,25 @@ describe("parseAllowedDomains", () => {
 
   it("strips a leading @ if someone writes the value as @domain.com", () => {
     expect(parseAllowedDomains("@kognozconsulting.com")).toEqual(["kognozconsulting.com"]);
+  });
+});
+
+describe("canManageIntegrations", () => {
+  it("lets operators connect, because that is the role everyone actually has", () => {
+    // DEFAULT_ROLE is "operator" and nothing writes "admin"; gating on admin
+    // alone would lock out every existing user, founder included.
+    expect(canManageIntegrations("operator")).toBe(true);
+    expect(canManageIntegrations("admin")).toBe(true);
+  });
+
+  it("keeps partners and viewers out — connecting acts on the live CRM", () => {
+    expect(canManageIntegrations("partner")).toBe(false);
+    expect(canManageIntegrations("viewer")).toBe(false);
+  });
+
+  it("fails closed on anything unrecognised", () => {
+    for (const r of ["", "Admin", "OPERATOR", "superuser"]) {
+      expect(canManageIntegrations(r), r).toBe(false);
+    }
   });
 });
