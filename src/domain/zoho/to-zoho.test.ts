@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { LEAD_SOURCE, NO_NAMED_CONTACT } from "./fields";
 import { assertNoContactData } from "./forbidden";
 import {
-  buildDeal, closingDateFor, dealName, packDealDescription, packLeadDescription,
+  blockedReason, buildDeal, closingDateFor, dealName, packDealDescription, packLeadDescription,
   pushActionFor, splitPersonName, toDeal, toLead, zohoTargetFor,
 } from "./to-zoho";
 import type { SyncCard } from "./types";
@@ -46,9 +46,12 @@ describe("zohoTargetFor", () => {
 });
 
 describe("pushActionFor", () => {
+  const PERSON = { name: "Rashid Ahmed", title: "CHRO" };
+
   it("covers the whole state machine", () => {
+    // Named contact throughout, so the conversion guard never fires here.
     const a = (stage: SyncCard["stage"], lead: string | null, deal: string | null) =>
-      pushActionFor({ stage, zohoLeadId: lead, zohoDealId: deal });
+      pushActionFor({ stage, zohoLeadId: lead, zohoDealId: deal, contact: PERSON });
 
     expect(a("Prospect", null, null)).toBe("CREATE_LEAD");
     expect(a("Prospect", "L1", null)).toBe("UPDATE_LEAD");
@@ -219,5 +222,52 @@ describe("buildDeal — the currency boundary", () => {
     if (!built.ok) return;
     // Only the Amount differs — the conversion must not disturb the mapping.
     expect({ ...built.payload, Amount: 0 }).toEqual({ ...plain, Amount: 0 });
+  });
+});
+
+describe("the conversion guard", () => {
+  const at = (stage: SyncCard["stage"], lead: string | null, contact: SyncCard["contact"]) =>
+    pushActionFor({ stage, zohoLeadId: lead, zohoDealId: null, contact });
+
+  /**
+   * Zoho makes Last_Name system-mandatory on Leads and §8 forbids inventing
+   * one, so an unnamed prospect carries a placeholder. Converting turns that
+   * placeholder into a real Contact record named "(no named contact)" in the
+   * client's live CRM — so the block belongs at conversion, the only moment the
+   * damage happens.
+   */
+  it("refuses to convert a Lead with nobody to convert it around", () => {
+    expect(at("Plan reach-out", "L1", null)).toBe("BLOCKED_NO_CONTACT");
+    expect(blockedReason("BLOCKED_NO_CONTACT")).toContain("named contact");
+    // And it says the card is not lost, which is the part that matters.
+    expect(blockedReason("BLOCKED_NO_CONTACT")).toContain("keeps syncing as a Lead");
+  });
+
+  it("converts as before once a person is verified", () => {
+    expect(at("Plan reach-out", "L1", { name: "Rashid Ahmed", title: "CHRO" })).toBe("CONVERT");
+  });
+
+  /**
+   * A Deal's Contact_Name is optional, so creating one outright needs no
+   * person. Only CONVERSION mints a Contact — blocking the create path too
+   * would strand every quick-added card for no reason.
+   */
+  it("still creates a Deal directly with no contact at all", () => {
+    expect(at("Plan reach-out", null, null)).toBe("CREATE_DEAL");
+  });
+
+  it("leaves every other branch exactly as it was", () => {
+    expect(at("Prospect", null, null)).toBe("CREATE_LEAD");
+    expect(at("Prospect", "L1", null)).toBe("UPDATE_LEAD");
+    expect(pushActionFor({ stage: "Proposal", zohoLeadId: "L1", zohoDealId: "D1", contact: null }))
+      .toBe("UPDATE_DEAL");
+    expect(pushActionFor({ stage: "Prospect", zohoLeadId: "L1", zohoDealId: "D1", contact: null }))
+      .toBe("DEMOTED");
+  });
+
+  it("reports no reason for the actions that are not blocked", () => {
+    for (const a of ["CREATE_LEAD", "UPDATE_LEAD", "CONVERT", "CREATE_DEAL", "UPDATE_DEAL", "DEMOTED"] as const) {
+      expect(blockedReason(a), a).toBeNull();
+    }
   });
 });

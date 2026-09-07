@@ -37,10 +37,21 @@ export type PushAction =
   | "CONVERT"
   | "CREATE_DEAL"
   | "UPDATE_DEAL"
-  | "DEMOTED";
+  | "DEMOTED"
+  /**
+   * Ready to convert, but there is no verified person to convert it around.
+   *
+   * Zoho makes `Last_Name` system-mandatory on Leads and PRD §8 forbids
+   * inventing one, so an unnamed prospect carries the `(no named contact)`
+   * placeholder. Harmless on a Lead — but conversion turns that placeholder
+   * into a real **Contact record** of that name, sitting in a CRM the client's
+   * team uses every day. So the block is here, at the only moment the damage
+   * happens, rather than refusing to create the Lead in the first place.
+   */
+  | "BLOCKED_NO_CONTACT";
 
 export function pushActionFor(
-  card: Pick<SyncCard, "stage" | "zohoLeadId" | "zohoDealId">,
+  card: Pick<SyncCard, "stage" | "zohoLeadId" | "zohoDealId" | "contact">,
 ): PushAction {
   const isProspect = card.stage === "Prospect";
 
@@ -49,9 +60,12 @@ export function pushActionFor(
   // un-converted, because Zoho has no un-convert operation.
   if (card.zohoDealId) return isProspect ? "DEMOTED" : "UPDATE_DEAL";
   if (isProspect) return card.zohoLeadId ? "UPDATE_LEAD" : "CREATE_LEAD";
-  // Past Prospect with a lead behind it: convert. Without one — quick-add opens
-  // straight at "Plan reach-out" (PRD §5) — create the Deal directly.
-  return card.zohoLeadId ? "CONVERT" : "CREATE_DEAL";
+  // Past Prospect with a lead behind it: convert — unless there is nobody to
+  // convert it around. Creating a Deal outright is fine without a contact
+  // (`Contact_Name` is optional on a Deal); it is specifically CONVERSION that
+  // mints a Contact from whatever `Last_Name` holds.
+  if (card.zohoLeadId) return card.contact ? "CONVERT" : "BLOCKED_NO_CONTACT";
+  return "CREATE_DEAL";
 }
 
 const iso = (d: Date): string => d.toISOString().slice(0, 10);
@@ -201,4 +215,11 @@ export function toDeal(card: SyncCard, today: Date, leadSource = LEAD_SOURCE): Z
   if (card.nextStep) payload.Next_Step = card.nextStep;
 
   return payload;
+}
+
+/** Why a card is not moving, in words the operator can act on. */
+export function blockedReason(action: PushAction): string | null {
+  return action === "BLOCKED_NO_CONTACT"
+    ? "Needs a named contact before it can become a Deal in Zoho. It keeps syncing as a Lead meanwhile."
+    : null;
 }
