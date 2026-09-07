@@ -3,10 +3,12 @@ import { InspectorPanel } from "@/components/studio/inspector-panel";
 import { InspectorSheet } from "@/components/studio/inspector-sheet";
 import { StatusLine, StudioShell, TopBar } from "@/components/studio/shell";
 import { curveTarget, monthOf } from "@/domain/revenue";
+import { pendingCount } from "@/domain/zoho/status";
 import { db } from "@/db/client";
 import { loadAccountOptions, loadPipeline, loadSweepStatus } from "@/db/queries";
 import { settings } from "@/db/schema";
 import { requireSession } from "@/lib/session";
+import { formatClock } from "@/lib/clock";
 import { eq } from "drizzle-orm";
 
 export default async function StudioLayout({ children }: LayoutProps<"/">) {
@@ -29,7 +31,31 @@ export default async function StudioLayout({ children }: LayoutProps<"/">) {
   const closed = pipeline.filter((c) => c.stage === "Won").reduce((sum, c) => sum + c.value, 0);
   const dueTodayCards = live.filter((c) => c.due && c.due <= today);
   const dueToday = dueTodayCards.length;
-  const pendingZoho = live.filter((c) => !c.zohoSyncedAt).length;
+  /**
+   * `pendingCount`, not `!zohoSyncedAt`.
+   *
+   * The old expression reported a card that synced once and was then edited as
+   * SYNCED, so the header undercounted exactly the cards most in need of a
+   * push. PRD §12 #6 requires this number to be accurate. The rule now lives in
+   * `src/domain/zoho/status.ts` under test, shared with the pipeline table.
+   *
+   * `zohoConnected` is false until the connection layer lands, which is also
+   * the honest reading: nothing is waiting for a CRM that is not wired up.
+   */
+  const zohoConnected = false;
+  const pendingZoho = pendingCount(live, zohoConnected);
+
+  /**
+   * The status line's `lastZohoSync` was a declared prop that nothing ever
+   * passed, so the strip read "Zoho not connected" no matter what the data
+   * said. Derived from the pipeline rather than stored: the most recent
+   * `zohoSyncedAt` IS the last sync, so a `settings.last_zoho_sync` column
+   * would be a second copy of a fact we already hold, free to drift.
+   */
+  const lastSyncedAt = pipeline.reduce(
+    (latest, c) => (c.zohoSyncedAt > latest ? c.zohoSyncedAt : latest),
+    "",
+  );
   // loadPipeline already orders by createdAt desc, so this is free.
   const recent = pipeline.slice(0, 5);
 
@@ -52,12 +78,14 @@ export default async function StudioLayout({ children }: LayoutProps<"/">) {
           recent={recent}
           openValue={open}
           pendingZoho={pendingZoho}
+          zohoConnected={zohoConnected}
         />
       }
       statusLine={
         <StatusLine
           triggersToday={sweep.triggersToday}
           lastSweepAt={sweep.lastSweepAt}
+          lastZohoSync={lastSyncedAt ? formatClock(lastSyncedAt) : undefined}
           error={sweep.lastError ? "last sweep reported errors" : undefined}
         />
       }

@@ -69,6 +69,49 @@ export async function saveOrgSettings(input: unknown) {
   return { ok: true as const };
 }
 
+/* -------------------------------------------------------------- Zoho (§6) */
+
+/**
+ * The Zoho email dropbox address.
+ *
+ * `card-actions.ts` already reads this to BCC every "Open in mail" so activity
+ * logs itself in the CRM (PRD §4.5) — but nothing has ever written it. Settings
+ * had no field, the seed does not set it, and there is no other writer, so the
+ * one piece of shipped Zoho behaviour has never once fired. This is the writer.
+ *
+ * A dropbox is a system mailbox, not a person, so §8 does not apply: it is the
+ * same category as the company-published generic mailboxes §8 explicitly allows.
+ */
+export async function saveZohoBcc(input: unknown) {
+  const session = await requireSession();
+
+  const parsed = z
+    .string()
+    .trim()
+    .max(320)
+    // Deliberately permissive beyond "has an @": Zoho dropbox addresses look
+    // like `dropbox-xxxx@zohocrm.com` today and the format is theirs to change.
+    // Refusing a valid address the operator pasted from Zoho would be worse
+    // than accepting one that simply does not receive.
+    .refine((v) => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+      message: "That does not look like an email address.",
+    })
+    .safeParse(input);
+
+  if (!parsed.success) {
+    return { ok: false as const, message: parsed.error.issues[0]?.message ?? "Not a valid address." };
+  }
+
+  // "" clears it, which is how the operator turns the BCC off.
+  await db
+    .update(settings)
+    .set({ zohoBcc: parsed.data || null })
+    .where(eq(settings.orgId, session.orgId));
+
+  revalidatePath("/settings");
+  return { ok: true as const };
+}
+
 /* --------------------------------------------------------------- DNC (§8) */
 
 export async function addToDnc(name: string, reason: string) {

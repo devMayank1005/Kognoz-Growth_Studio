@@ -38,11 +38,13 @@ export function InspectorPanel({
   recent = [],
   openValue = 0,
   pendingZoho = 0,
+  zohoConnected = false,
 }: {
   dueToday?: PipelineCardRow[];
   recent?: PipelineCardRow[];
   openValue?: number;
   pendingZoho?: number;
+  zohoConnected?: boolean;
 }) {
   const card = useSelection((s) => s.card);
 
@@ -53,6 +55,7 @@ export function InspectorPanel({
         recent={recent}
         openValue={openValue}
         pendingZoho={pendingZoho}
+        zohoConnected={zohoConnected}
       />
     );
   }
@@ -69,11 +72,14 @@ function Snapshot({
   recent,
   openValue,
   pendingZoho,
+  zohoConnected = false,
 }: {
   dueToday: PipelineCardRow[];
   recent: PipelineCardRow[];
   openValue: number;
   pendingZoho: number;
+  /** False until the connection layer lands. */
+  zohoConnected?: boolean;
 }) {
   const select = useSelection((s) => s.select);
 
@@ -119,15 +125,26 @@ function Snapshot({
       <List title="Recently added" cards={recent} empty="Nothing added yet." />
 
       <div className="border-t border-line pt-3">
-        <button
-          type="button"
-          disabled
-          title="Zoho is not connected yet"
-          className="w-full cursor-not-allowed rounded border border-line px-2.5 py-1.5 text-[13px] text-faint"
-        >
-          Push {pendingZoho} to Zoho
-        </button>
-        <p className="mt-1 text-[11px] text-faint">Zoho is not connected yet.</p>
+        {/*
+          A count is only shown once there is somewhere for those cards to go.
+          The disabled "Push N to Zoho" button that used to sit here named a
+          number and offered an action, neither of which meant anything while
+          the CRM was unconnected — and with the count corrected it would have
+          read "Push 0 to Zoho", which is worse.
+        */}
+        {zohoConnected ? (
+          <button
+            type="button"
+            disabled={pendingZoho === 0}
+            className="w-full rounded border border-line px-2.5 py-1.5 text-[13px] text-body transition-colors duration-150 hover:bg-panel disabled:cursor-not-allowed disabled:text-faint"
+          >
+            {pendingZoho > 0 ? `Push ${pendingZoho} to Zoho` : "Zoho up to date"}
+          </button>
+        ) : (
+          <p className="text-[11px] text-faint">
+            Zoho is not connected. Connect it in Settings to push the pipeline across.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { addToDnc, removeFromDnc, renamePartner, saveOrgSettings } from "@/app/actions/settings";
+import { addToDnc, removeFromDnc, renamePartner, saveOrgSettings, saveZohoBcc } from "@/app/actions/settings";
 import { ThemeToggle } from "./theme-toggle";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import type { StudioUser } from "@/components/studio/user-menu";
@@ -15,7 +15,7 @@ interface TowerRow {
 }
 
 export function SettingsForm({
-  towers, icpText, radarMarkets, dailyCallBudget, dnc, user,
+  towers, icpText, radarMarkets, dailyCallBudget, dnc, user, zohoBcc,
 }: {
   towers: TowerRow[];
   icpText: string;
@@ -23,6 +23,7 @@ export function SettingsForm({
   dailyCallBudget: number;
   dnc: string[];
   user: StudioUser;
+  zohoBcc: string;
 }) {
   return (
     <div className="mt-8 space-y-10">
@@ -31,7 +32,7 @@ export function SettingsForm({
       <DncList names={dnc} />
       <Appearance />
       <Account user={user} />
-      <Zoho />
+      <Zoho bcc={zohoBcc} />
     </div>
   );
 }
@@ -235,10 +236,74 @@ function Appearance() {
   );
 }
 
-function Zoho() {
+function Zoho({ bcc }: { bcc: string }) {
+  const [value, setValue] = useState(bcc);
+  const [busy, setBusy] = useState(false);
+
   return (
-    <Section title="Zoho CRM" note="System of record. Two-way sync is the next phase.">
-      <p className="text-[13px] text-amber">Not connected.</p>
+    <Section
+      title="Zoho CRM"
+      note="System of record. The API connection is the next phase — until then, mail logs itself by BCC and the pipeline exports as Zoho import files."
+    >
+      <label htmlFor="zoho-bcc" className="block text-[11px] uppercase tracking-wide text-faint">
+        Email dropbox address
+      </label>
+      <input
+        id="zoho-bcc"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="dropbox-xxxxx@zohocrm.com"
+        className="mt-1 w-full rounded border border-line bg-canvas px-2 py-1 text-[13px] text-body placeholder:text-faint"
+      />
+      <p className="mt-1 text-[11px] text-faint">
+        Every “Open in mail” BCCs this address, so the send logs itself against the record in Zoho.
+        Find it in Zoho under Setup → Channels → Email → Email Dropbox.
+      </p>
+
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await saveZohoBcc(value);
+            if (!r.ok) return toast.error(r.message);
+            toast.success(value ? "Dropbox address saved" : "BCC turned off");
+          } catch {
+            // The DNC button here once toasted success even when the write
+            // failed; this path does not repeat that.
+            toast.error("Could not save that", { description: "The server did not answer." });
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="mt-3 rounded bg-accent px-3 py-1 text-[13px] font-medium text-white transition-opacity duration-150 hover:opacity-90 disabled:opacity-40"
+      >
+        {busy ? "Saving…" : "Save"}
+      </button>
+
+      <div className="mt-5 border-t border-line pt-3">
+        <p className="text-[11px] uppercase tracking-wide text-faint">Export for Zoho import</p>
+        <p className="mt-1 text-[11px] text-faint">
+          Two files, in Zoho’s own import format (PRD §6): prospects as Leads, everything past
+          prospect as Deals. Same field mapping the API sync will use.
+        </p>
+        <div className="mt-2 flex gap-2">
+          {/* Plain links, not fetch: the browser has to receive the download. */}
+          <a
+            href="/api/zoho/export?kind=leads"
+            className="rounded border border-line px-2.5 py-1 text-[13px] text-body transition-colors duration-150 hover:bg-panel"
+          >
+            Leads .csv
+          </a>
+          <a
+            href="/api/zoho/export?kind=deals"
+            className="rounded border border-line px-2.5 py-1 text-[13px] text-body transition-colors duration-150 hover:bg-panel"
+          >
+            Deals .csv
+          </a>
+        </div>
+      </div>
     </Section>
   );
 }

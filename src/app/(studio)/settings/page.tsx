@@ -32,6 +32,7 @@ export default async function SettingsPage() {
         dailyCallBudget={cfg?.dailyCallBudget ?? 60}
         dnc={dncList}
         user={{ name: session.name, email: session.email, orgName: session.orgName }}
+        zohoBcc={cfg?.zohoBcc ?? ""}
       />
     </div>
   );

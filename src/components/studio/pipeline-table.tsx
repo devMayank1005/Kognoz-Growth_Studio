@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from "react";
 
 import type { PipelineCardRow } from "@/db/queries";
 import { practiceById } from "@/domain/practices";
+import { syncStatusOf, type SyncStatus } from "@/domain/zoho/status";
 import { useSelection, useWorkspace } from "@/store/selection";
 import { cn } from "@/lib/cn";
 
@@ -33,10 +34,13 @@ export function PipelineTable({
   cards,
   highlightId,
   onSelect,
+  zohoConnected = false,
 }: {
   cards: PipelineCardRow[];
   highlightId?: string;
   onSelect?: (card: PipelineCardRow) => void;
+  /** False until the connection lands, so the column stops implying a sync. */
+  zohoConnected?: boolean;
 }) {
   const active = useWorkspace((s) => s.cursor);
   const setActive = useWorkspace((s) => s.setCursor);
@@ -149,11 +153,7 @@ export function PipelineTable({
               </td>
               <td className="h-row px-2 text-muted">{c.next}</td>
               <td className="h-row px-2">
-                {c.zohoSyncedAt ? (
-                  <span className="text-[11px] text-won-text">synced</span>
-                ) : (
-                  <span className="text-[11px] text-amber">pending</span>
-                )}
+                <ZohoPill status={syncStatusOf(c, zohoConnected)} />
               </td>
             </tr>
           ))}
@@ -161,4 +161,32 @@ export function PipelineTable({
       </table>
     </div>
   );
+}
+
+/**
+ * The per-card Zoho state (PRD §6).
+ *
+ * Five states, not two. The old two-state version read `zohoSyncedAt` alone, so
+ * every row showed amber "pending" — including when Zoho was not connected at
+ * all, which promised a sync that could not happen, and including cards that
+ * had synced and were then edited, which it called synced.
+ */
+function ZohoPill({ status, error }: { status: SyncStatus; error?: string | null }) {
+  switch (status) {
+    case "off":
+      return <span className="text-[11px] text-faint">—</span>;
+    case "synced":
+      return <span className="text-[11px] text-won-text">synced</span>;
+    case "blocked":
+      // §8: on the do-not-contact list. Not a failure to retry.
+      return <span className="text-[11px] text-faint" title="On the do-not-contact list">blocked</span>;
+    case "error":
+      return (
+        <span className="text-[11px] text-danger" title={error ?? "Zoho refused this record"}>
+          failed
+        </span>
+      );
+    default:
+      return <span className="text-[11px] text-amber">pending</span>;
+  }
 }

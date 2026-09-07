@@ -110,6 +110,19 @@ export interface PipelineCardRow {
   /** YYYY-MM-DD, or "" — the day the packet went to the partner. */
   dispatchedAt: string;
   zohoSyncedAt: string;
+  /**
+   * ISO. Needed to know whether a synced card has since changed — the pending
+   * count was `!zohoSyncedAt` alone, which reported an edited card as synced.
+   */
+  updatedAt: string;
+  /**
+   * The contact split back apart. `contact` above is pre-formatted for display
+   * and loses the distinction the Zoho mapper turns on: a verified person may
+   * be named in the CRM, a target role may not (PRD §6, §9.5).
+   */
+  contactName: string;
+  contactTitle: string;
+  contactRole: string;
 }
 
 // Deduped per request: the studio layout and /today, /pipeline and /dashboard
@@ -139,6 +152,7 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
       dispatchedAt: opportunities.dispatchedAt,
       zohoSyncedAt: opportunities.zohoSyncedAt,
       createdAt: opportunities.createdAt,
+      updatedAt: opportunities.updatedAt,
     })
     .from(opportunities)
     .innerJoin(accounts, eq(opportunities.accountId, accounts.id))
@@ -170,6 +184,10 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
     // would parse to NaN and silently drop the row from the partner-silence list.
     dispatchedAt: r.dispatchedAt ? r.dispatchedAt.toISOString().slice(0, 10) : "",
     zohoSyncedAt: r.zohoSyncedAt ? r.zohoSyncedAt.toISOString() : "",
+    updatedAt: r.updatedAt.toISOString(),
+    contactName: r.contactName ?? "",
+    contactTitle: r.contactTitle ?? "",
+    contactRole: r.contactRole ?? "",
   }));
 });
 
