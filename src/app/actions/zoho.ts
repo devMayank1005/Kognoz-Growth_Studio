@@ -7,6 +7,7 @@ import { activities } from "@/db/schema";
 import { deleteZohoConnection, loadRevocationData } from "@/db/zoho";
 import { canManageIntegrations } from "@/domain/access";
 import { LEAD_SOURCE } from "@/domain/zoho/fields";
+import { describeZohoError } from "@/domain/zoho/errors";
 import { ZOHO_DEAL_STAGES } from "@/domain/zoho/stage";
 import { requireSession } from "@/lib/session";
 import { zohoGet } from "@/lib/zoho/records";
@@ -21,6 +22,8 @@ import { getAccessToken, revokeRefreshToken } from "@/lib/zoho/token";
  */
 
 const forbidden = { ok: false as const, message: "You do not have permission to change integrations." };
+
+
 
 export type PreflightCheck = {
   label: string;
@@ -53,7 +56,7 @@ export async function testZohoConnection(): Promise<
     token.apiDomain, "/org", token.accessToken,
   );
   if (!org.ok) {
-    checks.push({ label: "Organisation", state: "fail", detail: `${org.error.status} ${org.error.message}` });
+    checks.push({ label: "Organisation", state: "fail", detail: describeZohoError(org.error) });
   } else {
     const row = org.data.org?.[0] ?? {};
     const currency = typeof row.currency === "string" ? row.currency : "unknown";
@@ -79,7 +82,7 @@ export async function testZohoConnection(): Promise<
     token.apiDomain, "/settings/fields", token.accessToken, { module: "Deals" },
   );
   if (!deals.ok) {
-    checks.push({ label: "Deal fields", state: "fail", detail: `${deals.error.status} ${deals.error.message}` });
+    checks.push({ label: "Deal fields", state: "fail", detail: describeZohoError(deals.error) });
   } else {
     const fields = deals.data.fields ?? [];
     checks.push(pickListCheck(fields, "Lead_Source", "Lead Source", [LEAD_SOURCE]));
@@ -91,7 +94,7 @@ export async function testZohoConnection(): Promise<
     token.apiDomain, "/settings/fields", token.accessToken, { module: "Leads" },
   );
   if (!leads.ok) {
-    checks.push({ label: "Lead fields", state: "fail", detail: `${leads.error.status} ${leads.error.message}` });
+    checks.push({ label: "Lead fields", state: "fail", detail: describeZohoError(leads.error) });
   } else {
     const fields = leads.data.fields ?? [];
     const lastName = fields.find((f) => f.api_name === "Last_Name");

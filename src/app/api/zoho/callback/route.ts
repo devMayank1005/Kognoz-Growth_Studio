@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { saveZohoConnection } from "@/db/zoho";
 import { assertApiDomain, dcFromAccountsDomain, dcLabel, isZohoDc, ZOHO_DCS, type ZohoDc } from "@/domain/zoho/dc";
+import { classifyZohoError } from "@/domain/zoho/errors";
 import { redactSecrets } from "@/lib/redact";
 import { getStudioSession } from "@/lib/session";
 import { zohoClientId, zohoClientSecret, zohoRedirectUri } from "@/lib/zoho/config";
@@ -126,15 +127,20 @@ export async function GET(request: Request) {
   );
 
   if (!org.ok) {
-    if (org.error.status === 401) {
-      console.error(`[zoho] token refused at ${apiDomain} — wrong data centre?`);
-      return clearState(settings("wrongdc"));
-    }
-    if (org.error.status === 403) {
-      console.error(`[zoho] scope missing: ${org.error.code ?? org.error.message}`);
-      return clearState(settings("scope"));
-    }
-    console.error(`[zoho] preflight failed: ${org.error.status} ${org.error.message}`);
+    /**
+     * Classified by `src/domain/zoho/errors.ts`, which is pure and tested —
+     * because the obvious reading is wrong: Zoho returns **401 with
+     * OAUTH_SCOPE_MISMATCH** for a missing scope, not 403. Branching on the
+     * status here reported a scope problem as a wrong data centre, which is
+     * exactly the misdiagnosis this preflight exists to prevent.
+     */
+    const kind = classifyZohoError(org.error);
+    console.error(
+      `[zoho] preflight ${kind}: ${org.error.status} ${org.error.code ?? org.error.message}`,
+    );
+
+    if (kind === "scope") return clearState(settings("scope"));
+    if (kind === "auth") return clearState(settings("wrongdc"));
     return clearState(settings("failed"));
   }
 
