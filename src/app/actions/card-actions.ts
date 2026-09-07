@@ -16,6 +16,7 @@ import { checkBudget, logModelCall } from "@/engine/budget";
 import { PROSE_MODEL, engineConfigError } from "@/engine/client";
 import { CORE_FLOOR, WHALE_FLOOR, tierFor, type Tier } from "@/domain/routing";
 import { requireSession } from "@/lib/session";
+import { queueZohoPush } from "@/lib/zoho/notify";
 
 /**
  * The three things an operator does to a card: draft to it, packet it to a
@@ -233,6 +234,10 @@ export async function markDraftSent(
     });
   });
 
+  // After the commit, never inside it: a worker that reads mid-transaction
+  // sees the old row. Never throws (§12 #6).
+  await queueZohoPush(session.orgId, opportunityId, "changed");
+
   return {
     ok: true,
     patch: { stage: result.stage ?? card.stage, touches: result.touches, next: result.next, due: result.dueOn },
@@ -329,6 +334,10 @@ export async function recordOutcome(
     });
   });
 
+  // After the commit, never inside it: a worker that reads mid-transaction
+  // sees the old row. Never throws (§12 #6).
+  await queueZohoPush(session.orgId, opportunityId, "changed");
+
   return {
     ok: true,
     patch: {
@@ -378,6 +387,10 @@ export async function moveToStage(
       actorId: session.userId,
     });
   });
+
+  // After the commit, never inside it: a worker that reads mid-transaction
+  // sees the old row. Never throws (§12 #6).
+  await queueZohoPush(session.orgId, opportunityId, "changed");
 
   return { ok: true, stage };
 }
@@ -442,6 +455,10 @@ export async function setCardValue(
       actorId: session.userId,
     });
   });
+
+  // After the commit, never inside it: a worker that reads mid-transaction
+  // sees the old row. Never throws (§12 #6).
+  await queueZohoPush(session.orgId, opportunityId, "changed");
 
   revalidatePath("/pipeline");
   revalidatePath("/dashboard");
