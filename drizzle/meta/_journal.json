@@ -92,6 +92,13 @@
       "when": 1788787862488,
       "tag": "0012_redenominate_stored_rows",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788860951605,
+      "tag": "0013_activity_log_view",
+      "breakpoints": true
     }
   ]
 }

@@ -60,3 +60,7 @@ backups/*.sql
 # playwright
 /test-results/
 /playwright-report/
+
+.env.local
+.env.example
+.env.local.bak.1788767143
