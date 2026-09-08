@@ -112,6 +112,48 @@ describe("matchIntent — add (PRD acceptance criterion 3)", () => {
     expect(matchIntent("add a note to that")).toBeNull();
     expect(matchIntent("add the same for next week")).toBeNull();
   });
+
+  // The gate on the value used to be `[$\d][\d.,kKmM]*` while parseMoney already
+  // understood cr/lakh. Rupee amounts therefore never matched, and the unmatched
+  // text stayed glued to whatever preceded it — silently corrupting the account
+  // name or the solution, and with it the tower the card was routed to.
+  it.each([
+    ["add NEOM at 5cr", "NEOM", undefined, 50_000_000],
+    ["add Emaar at 3cr", "Emaar", undefined, 30_000_000],
+    ["add Emaar for Hire at 3cr", "Emaar", "Hire", 30_000_000],
+    ["add Aldar for Hire at 50L", "Aldar", "Hire", 5_000_000],
+    ["add Aldar for Hire at 50 lakh", "Aldar", "Hire", 5_000_000],
+    ["add ADNOC for Learn at 2.5crore", "ADNOC", "Learn", 25_000_000],
+  ])("parses %j in rupee notation", (query, company, solution, value) => {
+    expect(matchIntent(query)).toEqual({ kind: "add", company, solution, value });
+  });
+
+  // The composer advertises this exact string (src/components/studio/chat.tsx).
+  // It parsed as company "Emaar", solution "Hire at 3cr" — which resolves to no
+  // practice, so the card fell back to tower T1 and reached the wrong partner.
+  // Pinned here so the placeholder and the parser cannot drift apart again.
+  it("parses the example the composer tells the operator to type", () => {
+    expect(matchIntent("add Emaar for Hire at 3cr")).toEqual({
+      kind: "add",
+      company: "Emaar",
+      solution: "Hire",
+      value: 30_000_000,
+    });
+    expect(matchIntent("add Emaar for Hire at 300K")).toEqual({
+      kind: "add",
+      company: "Emaar",
+      solution: "Hire",
+      value: 300_000,
+    });
+  });
+
+  // Known limit, recorded rather than pretended away: a trailing phrase that is
+  // neither `for` nor `at` still lands in the company name. That is what created
+  // the account literally called "Genpact in this". The fix for this class is
+  // confirming the parse before writing, not a wider regex.
+  it("still cannot tell a trailing phrase from part of a company name", () => {
+    expect(matchIntent("add Genpact in this")).toMatchObject({ company: "Genpact in this" });
+  });
 });
 
 describe("matchIntent — sweep", () => {

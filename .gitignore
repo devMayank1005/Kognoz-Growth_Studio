@@ -62,5 +62,4 @@ backups/*.sql
 /playwright-report/
 
 .env.local
-.env.example
 .env.local.bak.1788767143

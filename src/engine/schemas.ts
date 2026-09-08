@@ -20,7 +20,7 @@ const PRACTICE_NAMES = PRACTICES.map((p) => p.name) as [string, ...string[]];
 
 export const engineRowSchema = z.object({
   solution: z.enum(PRACTICE_NAMES).describe("Practice name, exactly as listed"),
-  company: z.string().min(1),
+  company: z.string().trim().min(1),
   contact_name: z.string().describe("Empty unless the person is actually named"),
   contact_title: z.string().describe("Their title, or the role to aim at"),
   country: z.string(),

@@ -26,7 +26,9 @@ import { queueZohoPush } from "@/lib/zoho/notify";
  */
 
 const rowSchema = z.object({
-  company: z.string().min(1),
+  // `.trim()` before `.min(1)`: a company of "   " passed min(1) and then became
+  // an empty account name at the upsert below.
+  company: z.string().trim().min(1),
   solution: z.string().optional(),
   contact_name: z.string().optional(),
   contact_title: z.string().optional(),
@@ -197,7 +199,13 @@ export async function addCard(
   // layout needs its own invalidation — soft navigation never refetches it.
   // After the write, never before: a worker that reads mid-transaction sees the
   // old row. Never throws — a queue outage must not fail the add (§12 #6).
-  await queueZohoPush(session.orgId, card.id, "created");
+  // `inserted.id`, NOT `card.id`. `makeCard` mints its own crypto.randomUUID()
+  // which is never stored — the insert above lets Postgres generate the id and
+  // returns it. Passing the card's id sent `pushCard` an id that exists nowhere,
+  // so it answered "Card not found." and every add silently skipped its sync.
+  // Invisible because zoho_dry_run defaults true: a dry run and a missing card
+  // both write nothing.
+  await queueZohoPush(session.orgId, inserted.id, "created");
 
   revalidatePath("/pipeline");
   revalidatePath("/today");

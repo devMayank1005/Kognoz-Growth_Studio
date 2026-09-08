@@ -85,7 +85,18 @@ export function matchIntent(query: string): Intent | null {
     const rest = addMatch[1].trim();
     if (NOT_A_COMPANY.test(rest)) return null;
 
-    const withValue = /^(.*?)\s+at\s+([$\d][\d.,kKmM]*)$/.exec(rest);
+    // The gate must accept every suffix `parseMoney` understands, and let
+    // `parseMoney` be the judge of the rest. It used to be `[$\d][\d.,kKmM]*`
+    // — no `c`, `r` or `l` — so `at 3cr` never matched here even though
+    // parseMoney handles it. The value then stayed glued to whatever came
+    // before: `add Emaar at 3cr` stored an account named "Emaar at 3cr", and
+    // `add Emaar for Hire at 3cr` — the placeholder this app advertises in the
+    // composer — parsed the solution as "Hire at 3cr", which resolves to no
+    // practice, so the card fell back to practice "org" and tower T1 and went
+    // to the wrong partner at the default value.
+    // `\s*` before the suffix because "50 lakh" is how people write it, and
+    // parseMoney already strips the space.
+    const withValue = /^(.*?)\s+at\s+([$₹\d][\d.,]*\s*(?:cr|crore|lakh|lac|l|k|m)?)$/i.exec(rest);
     const beforeValue = withValue ? withValue[1].trim() : rest;
     const value = withValue ? parseMoney(withValue[2]) : undefined;
 

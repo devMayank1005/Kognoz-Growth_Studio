@@ -46,6 +46,10 @@ which does not allow collaborators on a private repo: a commit whose author or c
 project owner is refused with *"the commit author did not have contributing access"*. Twenty commits
 were rewritten once already for exactly this.
 
+Commit messages here are load-bearing, and one is not: **`efa3b11`, messaged "Refactor code
+structure for improved readability and maintainability", is actually the USD→INR re-denomination**,
+migrations `0011` and `0012` included. Anyone bisecting money behaviour will otherwise skip it.
+
 ## Environment variables
 
 **Read every env var through `src/lib/env.ts` (`readEnv` / `requireEnv`), never `process.env`
@@ -72,6 +76,23 @@ signing key and sign every user out.
 
 `src/engine/client.ts` exports `engineConfigError`, checked by the chat route and `generateDraft` so
 a misconfigured key is reported as configuration rather than inviting a retry that cannot work.
+`zohoConfigError` and `cryptoConfigError` follow the same pattern — **`console.error` plus an
+exported string, never a throw.** A misconfigured optional integration must not take down pages
+that never touch it.
+
+**Zoho.** `ZOHO_CLIENT_SECRET` uses `readSecret`, `ZOHO_CLIENT_ID` uses `readEnv`. Strictly a
+newline is legal in a form-encoded POST body, but a URL-encoded newline in `client_secret`
+produces Zoho's opaque `invalid_client` with nothing pointing at why — the same incident class
+this file already records twice. `zohoConfigError` additionally checks the client id starts with
+`1000.`, because the likeliest paste error is putting the secret in the id slot and the result is
+an opaque failure at the consent screen.
+
+**`ZOHO_TOKEN_KEY` must decode to exactly 32 bytes** (`openssl rand -base64 32`). Unlike
+`BETTER_AUTH_SECRET`, a wrong value here does not fail as a config error — it fails as a GCM
+auth-tag mismatch, which reads exactly like data corruption. The envelope carries an 8-hex-char
+**fingerprint of the key, not the key**, so a failure can say "encrypted under `a3f21c8b`, this
+server holds `9d40e117`" instead of "decryption failed". `ZOHO_TOKEN_KEY_PREVIOUS` is
+decrypt-only, for rotation.
 
 ## Deployment
 
@@ -87,6 +108,16 @@ Production: **https://kognoz-growthstudio.vercel.app** (Vercel). Runbook: `docs/
   To verify from outside, sign a GET with `signDataWithKey` from `inngest/helpers/net` and look for
   `authentication_succeeded: true` (see `docs/DEPLOY.md`). Locally it needs no account at all:
   `npx inngest-cli dev`.
+- **Zoho matches `redirect_uri` byte for byte**, and it is built in exactly one place
+  (`zohoRedirectUri()` in `src/lib/zoho/config.ts`) so the authorize leg and the token exchange
+  cannot drift. Register `https://kognoz-growthstudio.vercel.app/api/zoho/callback` plus
+  `http://localhost:3000` and `:3001` — dev usually lands on 3001.
+- **Vercel preview deployments cannot connect Zoho**: their URLs change per deploy, so no
+  registered redirect URI can match.
+- Register the Zoho app as a **server-based application under an org-owned account**, never a
+  Self Client and never an individual's login. A Self Client's grant is welded to whoever is
+  signed in to the API Console, and a closed personal account kills the client and every refresh
+  token it ever issued.
 
 ## Database
 
@@ -100,6 +131,119 @@ region-move plan: `docs/CLAIM-NEON.md`.
   This has already caused one round of `password authentication failed`.
 - `pnpm db:backup --verify` dumps and then proves it by restoring into a local scratch database.
   Dumps land in `backups/`, gitignored because they contain real email addresses (§8).
+
+**Migrations since 0004:** `0005` `zoho_connections` · `0006`/`0007` currency and FX columns on
+`settings` · `0008` `sweep_runs.dropped` + `web_search_degraded` (a *refused finding* is not a
+*failed run*; conflating them kept the status strip red all day after one transient 05:36
+failure) · `0009` `zoho_dry_run` · `0010` the four `opportunities.zoho_*` sync-state columns ·
+`0011`/`0012` the re-denomination · `0013` the `activity_log` view · `0014` a one-off account
+merge. `0013`+ are hand-written; `drizzle-kit generate --custom` writes the journal entry.
+
+**`activity_log` is a view for reading the audit trail in the Neon console**, not for the app —
+nothing in `src/` queries it. It resolves `actor_id` to a name and unwraps
+`payload_json.action`, because `activities.type` is a catch-all: stage moves, DNC edits and the
+re-denomination all store `type = 'note'` and hide the real verb in the payload. **No column in
+it may be named email/phone/etc.** — `check-compliance` scans `information_schema.columns`, which
+includes views.
+
+## Money
+
+**Everything is rupees. Do not convert it again.** `PROGRAM_TARGET = 2_000_000_000` (₹200Cr),
+`TIER_VALUE {wedge 7.5M, core 30M, whale 50M}`, `CORE_FLOOR 25M`, `WHALE_FLOOR 50M`,
+`VALUE_CAP 10_000_000_000`.
+
+- The re-denomination happened **once**, at a **frozen ₹100** planning rate — not a market print.
+  It is recorded as the exported `REDENOMINATION` constant in `src/domain/revenue.ts` so anyone
+  about to "fix" one of the numbers greps for it and lands there first.
+- **Never wire those constants to `settings.fx_usd_inr`.** They are literals on purpose. A
+  constant derived from a live rate turns a fixed commitment into one that moves with the market
+  — and `tier`/`whale` are *stored* columns, so the stored value would then disagree with the
+  derived one and live cards would silently re-tier.
+- `0011` moved amounts, tiers and both currency settings in one transaction; `0012` moved the
+  amounts buried in `conversations.messages_json`. `0011` alone was not enough: action-table rows
+  inside old conversations each render a live `＋ Add` button, so a stale row is a button that
+  creates a card at 1/100th of its worth. `0012` touches **only `rows[].value`** —
+  `chart.data[].value` in the same documents counts triggers per market, and multiplying counts
+  turns a bar chart into nonsense.
+- **`convertAmount` refuses rather than falls back.** No rate, or one older than
+  `MAX_RATE_AGE_DAYS = 3`, returns `{ok:false}` — never the unconverted number. A card that fails
+  to sync is a visible problem; a deal sitting in the client's CRM at 1/83rd of its value is
+  invisible until someone builds a board pack out of it. Rates are integers scaled by
+  `RATE_SCALE = 10_000`.
+- `constantsMatch` fails writes closed when `settings.base_currency` disagrees with
+  `CONSTANTS_CURRENCY`. **Trap:** the schema default for `base_currency` is still `'USD'` and
+  `0011` only `UPDATE`s existing rows, so a fresh `pnpm db:seed` after migrating writes a row
+  saying USD and every add is then refused with `MIGRATION_IN_PROGRESS`. The guard is correct —
+  fix the seeded row, do not weaken the guard.
+- The FX rate is one keyless fetch folded into the morning sweep, not its own cron. A failed
+  fetch is not an error state: the previous rate stays and its *age* is the signal. A manual rate
+  sets `fxManualOverride`, which makes the nightly fetch skip — remove that and the override is
+  meaningless. Both the fetcher and manual entry carry a 1–1000 sanity band, because a
+  fat-fingered `8321` for `83.21` understates every deal by 100× and looks plausible.
+- `src/domain/money.ts` and `src/lib/fx.ts` still *open* with "Growth Studio stores USD". That
+  prose predates the re-denomination and is stale; the code is correct.
+
+## Zoho — the connection
+
+- **A token is not portable across data centres.** One issued at `.in` returns **401** at
+  `.com`'s API domain with nothing saying why, so the region is part of the connection, stored
+  per row. There is deliberately **no API domain** in the DC table (`src/domain/zoho/dc.ts`):
+  Canada's accounts host is `accounts.zohocloud.ca`, which proves the pattern is not derivable.
+  The API domain is only ever what Zoho returned in the token response.
+- Host checks are exact-or-dot-suffix. An earlier `/zohoapis\.[a-z.]+$/` accepted
+  `zohoapis.in.evil.com` — which would have sent the access token to somebody else's server.
+- **Zoho returns HTTP 401 with `OAUTH_SCOPE_MISMATCH` for a missing scope, not 403.** Branch on
+  the **code first, status second**. Backwards, a scope problem reads as a wrong data centre and
+  sends whoever is debugging it into region settings for an afternoon. Verified against the live API.
+- **An access token lasts 1 hour and only 10 token requests are allowed per 10 minutes.** That is
+  why the token is cached on the connection row, why the refresh takes `SELECT … FOR UPDATE` with
+  the expiry **re-read inside the lock**, and why `pushCard` mints a token *after* the dry-run
+  branch — a dry run makes no network call at all.
+- `access_type=offline` **and** `prompt=consent` are both mandatory on the authorize URL. Without
+  them a second authorisation returns no refresh token, the connection succeeds, and dies in
+  exactly one hour. The callback refuses to store a grant with no refresh token.
+- The OAuth `state` cookie is `SameSite=Lax`, not Strict — Strict drops it on Zoho's cross-site
+  top-level GET back, so validation would fail on *every* connect and look like Zoho rejecting
+  us. It is base64url because Zoho mishandles a `|` in `state`, encoded or not.
+- `/api/zoho/connect` and `/api/zoho/callback` are deliberately **not** matched by `proxy.ts`: a
+  redirect to `/sign-in` there discards a short-lived authorization code. Auth is enforced inside
+  the handlers, where the failure can be named.
+- The refresh token is AES-256-GCM at rest, AAD-bound to `zoho:refresh:{orgId}` — which matters
+  precisely because org isolation here is a `where` clause and nothing else. **`src/db/zoho.ts`
+  is the only module that may select the encrypted columns**; everything else goes through
+  `loadZohoStatus`. A decrypt failure is reported as `unreadable`, **never as "not connected"** —
+  the latter sends the operator to reconnect, which burns one of Zoho's 20 refresh tokens per
+  user and does not fix a mismatched `ZOHO_TOKEN_KEY`.
+
+## Zoho — what gets written
+
+- **`settings.zoho_dry_run` defaults to `true`.** A dry run builds the full payload and returns
+  before any network call. Nothing has necessarily ever been written to a live CRM.
+- **`src/lib/zoho/records.ts` is the only module that speaks HTTP to the CRM, and it has no
+  delete function — deliberately.** A bug cannot call what does not exist. Same structural
+  argument as `people` having no email column. (This is convention; what eslint enforces is
+  domain purity — see `## Layout`.)
+- **Zoho returns HTTP 200 with a per-record failure inside `data[]`.** A record refused for an
+  unknown picklist value is not a 4xx. Check the per-record verdict, or you store an id that does
+  not exist. Same shape as the web-search rule below — read the body, not the status.
+- **Never echo a Zoho error body.** An `INVALID_DATA` response repeats the record back, and for a
+  Contact that echo contains `Email` and `Phone`. Keep `message` only. §8 applies to diagnostics.
+- **Resolve the CRM's currency through `currencyCodeOf`, never a literal comparison.** `/org`
+  returns four spellings of the same fact; a connection holding `"Indian Rupee"` failed a
+  `=== "INR"` check, fell back to base, and shipped every Deal unconverted — off by 83×. An
+  unknown currency returns `null` and the card is blocked, never guessed.
+- `pushAction` is derived from the row every time, never stored, so a retry recomputes rather
+  than trusting a flag that may not have been written. `updateRecord` ids come only from our own
+  `zoho_lead_id`/`zoho_deal_id` columns — never a search, never a name match.
+- **`queueZohoPush` never throws and is called only after the transaction commits.** A queue
+  outage must not fail the operator's mutation; a worker reading before the commit sees the old
+  row. It takes the **inserted row id** — passing `makeCard`'s own generated id made every add
+  silently skip its sync, invisibly, because dry-run and "card not found" both write nothing.
+- **The pull leg is built, tested and not wired.** `parsePulledDeal`, `stageFromZoho` and
+  `conflict.resolve` have no non-test callers and there is no reconcile job, so PRD §6 /
+  acceptance #6 (two-way sync within the hour) is **not met**. If you wire it: the reverse stage
+  map is lossy (three local stages all push as `Qualification`), so ask the forward map first or
+  every `Plan reach-out` card drags forward on the first reconcile, forever.
 
 ## Anthropic API rules (do not regress these)
 
@@ -117,6 +261,15 @@ region-move plan: `docs/CLAIM-NEON.md`.
 - Build the cached live-state block against a **5-minute rounded timestamp**, never `Date.now()`,
   or the prompt cache never hits. Verify with `usage.cache_read_input_tokens`.
 - The API key is server-side only. Never prefix it `NEXT_PUBLIC_`.
+- `ENGINE_SYS` interpolates `formatCompact(PROGRAM_TARGET, "INR")`. It is still built once at
+  module load from deterministic sources, so caching holds — but a change to `formatCompact` or
+  `PROGRAM_TARGET` invalidates the cached prefix. Everything volatile still belongs in the
+  live-state block, which now also carries a `CURRENCY:` line naming the **effective** currency
+  (`effectiveCurrency`, i.e. the fallback), never the requested one — or rupee figures get
+  labelled as dollars in the one block the model trusts.
+- `engineRowSchema.value` has a plausibility floor of `TIER_VALUE.wedge`, not `positive()`. The
+  floor exists precisely so legacy dollar magnitudes (75000, 300000) are *rejected*; `makeCard`
+  then defaults to `TIER_VALUE.core` rather than storing something wrong.
 
 ## Hard product rules (PRD §8 — compliance, not preferences)
 
@@ -131,7 +284,23 @@ region-move plan: `docs/CLAIM-NEON.md`.
   `rolbypassrls = true`, so policies would be ignored even if added. `withOrg()` sets an
   `app.org_id` GUC that nothing currently reads; it is kept because it is the hook real policies
   would use. Do not describe this as two layers. Adding a second org REQUIRES doing RLS first:
-  policies on all 12 org-scoped tables plus a NOBYPASSRLS application role.
+  policies on all **13** org-scoped tables plus a NOBYPASSRLS application role. The thirteenth is
+  `zoho_connections`, and it is the one to start with — it is the only table holding encrypted
+  third-party credentials.
+- **`withOrg()` is not inert, whatever the GUC sentence above implies.** It is a real
+  transaction, and `src/lib/zoho/token.ts` depends on that for `SELECT … FOR UPDATE` on the
+  connection row — flattening it into a plain query removes the token-refresh lock and lets N
+  parallel jobs each burn one of Zoho's 10-per-10-minutes token requests.
+- Any `fetch` inside `withOrg` must be bounded well under `idle_in_transaction_session_timeout`
+  (15s). The pool's `statement_timeout` bounds the *query*, not the fetch, and the fetch is
+  holding a pooled connection open inside a transaction. The token refresh uses
+  `AbortSignal.timeout(10_000)` for exactly this reason.
+- **The §8 boundary has an outbound half too.** `SyncCard` (`src/domain/zoho/types.ts`) has no
+  email/phone/address field and must never gain one — a mapper cannot leak what it cannot be
+  handed. `src/domain/zoho/forbidden.ts` is the single definition of the contact-shaped patterns,
+  and `scripts/check-compliance.mts` imports it, so CI and the unit tests cannot drift onto
+  different patterns. It matches in JS, not SQL: the pattern uses lookbehind, and Postgres `~*`
+  is not guaranteed to read it the same way.
 
 ## Conversations
 
@@ -174,10 +343,18 @@ Two layers, deliberately separate:
 
 ## Layout
 
-`src/domain/` is pure — no I/O, no imports from `db` or `engine`. It holds the scoring, routing,
-signal-decay, and revenue math, and it is the part that must stay under test.
+`src/domain/` is pure — no I/O, no imports from `db`, `lib`, `engine` or `app`. **This is now an
+eslint rule, not a convention** (`eslint.config.mjs`): a `fetch` or one of those imports under
+`src/domain/**` fails the build, tests included. It holds the scoring, routing, signal-decay and
+revenue math *and the entire Zoho mapping* (`src/domain/zoho/`) — the part that decides what is
+written into a client's live CRM, and therefore the part that must stay under test.
+`src/lib/zoho/card.ts` is the deliberate seam: `PipelineCardRow` is database-shaped, so the
+adapter lives in `lib`, not `domain`.
 `src/engine/` owns Claude calls, prompt caching, and Zod schemas.
-`prompts/` holds the five system prompts, versioned.
+`prompts/` holds **four** system prompts across three files, versioned: `ENGINE_SYS` and
+`EXTRACT_SYS` (`prompts/engine.ts`), `MAIL_SYS`, `SWEEP_SYS`. The prototype's `INSIGHT_SYS` and
+`ROOM_SYS` were never ported — do not go looking for them. `EXTRACT_SYS` has no prototype
+ancestor; it exists because `ENGINE_SYS` dropped the mandatory `ENGINE_JSON:` tail.
 
 ## Commands
 
@@ -188,4 +365,9 @@ pnpm test:e2e       # Playwright
 pnpm db:generate    # drizzle-kit generate
 pnpm db:migrate     # apply migrations
 pnpm db:seed        # load universe, practices, towers, signals
+pnpm lint           # eslint (also proves the domain-purity rule still passes)
+pnpm typecheck      # next typegen && tsc --noEmit
+pnpm db:check-compliance   # PRD §8 — scans the LIVE schema, views included
+pnpm db:check-auth  # Better Auth runtime-vs-database schema drift
+pnpm db:backup --verify    # dump, then prove it by restoring into a scratch DB
 ```

@@ -3,8 +3,18 @@ import { assertApiDomain } from "@/domain/zoho/dc";
 /**
  * The only module permitted to speak to Zoho's HTTP API.
  *
- * Everything else takes narrowed types from here. That is enforced by eslint,
- * and the reason is PRD §8: a raw Zoho record carries `Email`, `Phone` and
+ * Everything else takes narrowed types from here. That is CONVENTION, not a
+ * lint rule — this comment used to claim eslint enforced it, and nothing did.
+ * What eslint does enforce is the other half of the boundary: src/domain may
+ * not fetch or import an adapter at all, so a raw record cannot reach the
+ * mapping layer even by accident. Keeping HTTP in this one module is still on
+ * whoever edits it.
+ *
+ * A rule banning `fetch` outside this file would be the wrong one to write:
+ * token.ts and the OAuth callback legitimately call Zoho's *accounts* server,
+ * so it would be mostly exemptions.
+ *
+ * The reason any of it matters is PRD §8: a raw Zoho record carries `Email`, `Phone` and
  * `Mobile`, and `activities.payloadJson` is untyped `jsonb` — so "someone logs
  * the raw response for debugging" is one line away from putting personal
  * contact data into Postgres and into every `pg_dump`.
