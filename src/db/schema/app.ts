@@ -21,7 +21,7 @@
  * practice id as text.
  */
 
-import { relations, sql } from "drizzle-orm";
+import { desc, relations, sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -504,6 +504,25 @@ export const activities = pgTable(
   (t) => [
     index("activities_opportunity_idx").on(t.opportunityId),
     index("activities_org_at_idx").on(t.orgId, t.at),
+    /**
+     * The one index the audit found worth adding now.
+     *
+     * `account_id` is a foreign key and Postgres does not index those. The account
+     * dossier filters and sorts on exactly this pair (`loadAccountDossier` in
+     * src/db/queries.ts), and the planner's only alternative was to walk the org's
+     * entire activity history in `at` order and discard most of it — on the
+     * fastest-growing table in the app, a row per add, draft, send, packet,
+     * outcome, value change and push.
+     *
+     * It also serves the delete: `activities.account_id` is ON DELETE SET NULL as
+     * of 0020, so every account delete previously seq-scanned this table.
+     *
+     * The rest of the missing-index list is deliberately NOT here. At 174 accounts
+     * Postgres reads those tables faster than an index, and paying write cost for
+     * a read that is already instant is the wrong trade. This one is on the table
+     * that actually grows without bound.
+     */
+    index("activities_account_at_idx").on(t.accountId, desc(t.at)),
   ],
 );
 

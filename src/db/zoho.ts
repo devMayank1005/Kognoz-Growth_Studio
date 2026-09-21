@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { cache } from "react";
 
 import { db, withOrg, type Db, type Tx } from "@/db/client";
 import { activities, zohoConnections } from "@/db/schema";
@@ -59,8 +60,17 @@ export type ZohoStatus =
  * "not connected" would send the operator to reconnect — which burns one of
  * Zoho's 20 refresh tokens per user and does not address the actual cause,
  * a mismatched `ZOHO_TOKEN_KEY`.
+ *
+ * `cache()` for the same reason `loadPipeline` and `loadMoneyView` have it, and it
+ * was the one loader in the studio layout without it: the layout reads it and then
+ * /pipeline and /settings each read it again, so those routes paid two round trips
+ * for one answer. At ~240ms each that is a wasted connection out of a pool of ten,
+ * and src/db/client.ts records that four simultaneous cold connections already
+ * produced 500s.
+ *
+ * Note this also decrypts, so deduplicating the call deduplicates that too.
  */
-export async function loadZohoStatus(orgId: string): Promise<ZohoStatus> {
+export const loadZohoStatus = cache(async function loadZohoStatus(orgId: string): Promise<ZohoStatus> {
   const [row] = await db
     .select({
       dc: zohoConnections.dc,
@@ -115,7 +125,7 @@ export async function loadZohoStatus(orgId: string): Promise<ZohoStatus> {
     lastRefreshAt: row.lastRefreshAt,
     lastError: row.lastError,
   };
-}
+});
 
 function canDecrypt(envelope: string, orgId: string): boolean {
   try {

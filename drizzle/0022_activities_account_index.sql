@@ -1,0 +1,1 @@
+CREATE INDEX "activities_account_at_idx" ON "activities" USING btree ("account_id","at" desc);

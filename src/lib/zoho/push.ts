@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import { db, withOrg } from "@/db/client";
-import { loadDnc, loadPipeline } from "@/db/queries";
+import { loadCardForPush, loadDnc } from "@/db/queries";
 import { activities, opportunities, settings, zohoConnections } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
 import { classifyZohoError, describeZohoError, spendsStrike } from "@/domain/zoho/errors";
@@ -44,22 +44,25 @@ const LEAD = "Leads";
 const DEAL = "Deals";
 
 export async function pushCard(orgId: string, opportunityId: string): Promise<PushResult> {
-  const [row] = await db
-    .select({
-      leadId: opportunities.zohoLeadId,
-      dealId: opportunities.zohoDealId,
-      // Read fresh here, not from the React-cached `loadPipeline` below: it is
-      // half of the idempotency key.
-      updatedAt: opportunities.updatedAt,
-    })
-    .from(opportunities)
-    .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)))
-    .limit(1);
-
-  // `loadPipeline` is cached per request and already joins the account, the
-  // partner and the verified person — the exact shape `toSyncCard` wants.
-  const card = (await loadPipeline(orgId)).find((c) => c.id === opportunityId);
-  if (!row || !card) return { status: "skipped", account: "unknown", action: "CREATE_LEAD", reason: "Card not found." };
+  /**
+   * ONE query for this card, where there used to be two — and the second was a
+   * full scan.
+   *
+   * This read `leadId`/`dealId`/`updatedAt` for one row, and then two lines later
+   * did `(await loadPipeline(orgId)).find(c => c.id === opportunityId)`. The old
+   * comment said `loadPipeline` is "cached per request", which is true and was
+   * irrelevant here: Inngest runs one HTTP invocation per `step.run`, so every step
+   * is a fresh request scope and a fresh unbounded four-table scan. A "Push now"
+   * over N pending cards did N+1 of them to read N rows, serially, on a ~240ms
+   * round trip.
+   *
+   * `loadCardForPush` returns the same mapped shape `toSyncCard` wants plus the two
+   * Zoho ids and a fresh `updatedAt` — fresh because it is half the idempotency key.
+   */
+  const found = await loadCardForPush(orgId, opportunityId);
+  if (!found) return { status: "skipped", account: "unknown", action: "CREATE_LEAD", reason: "Card not found." };
+  const { card, leadId, dealId, updatedAt } = found;
+  const row = { leadId, dealId, updatedAt };
 
   const sync = { ...toSyncCard(card), zohoLeadId: row.leadId, zohoDealId: row.dealId };
   const action = pushActionFor(sync);
@@ -87,6 +90,14 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
     return { status: "blocked", account: card.account, action, reason: noContact };
   }
 
+  /**
+   * Left as its own read, deliberately.
+   *
+   * `loadMoneyView` below reads the same `settings` row, so this is one extra
+   * single-row primary-key lookup per card. Folding `zohoDryRun` into
+   * `loadMoneyView` would put an integration flag inside a `MoneyView`, which is a
+   * domain type about currency — the coupling costs more than the query saves.
+   */
   const [cfg] = await db
     .select({ dryRun: settings.zohoDryRun })
     .from(settings)
