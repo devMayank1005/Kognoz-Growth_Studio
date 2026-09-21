@@ -6,7 +6,7 @@ import { CurrencySettings } from "@/components/studio/currency-settings";
 import { db } from "@/db/client";
 import { loadDnc, loadPartnersByTower } from "@/db/queries";
 import { loadZohoStatus } from "@/db/zoho";
-import { canManageIntegrations } from "@/domain/access";
+import { can, canManageIntegrations } from "@/domain/access";
 import { defaultDc } from "@/lib/zoho/config";
 import { loadMoneyView } from "@/lib/money-view";
 import { settings } from "@/db/schema";
@@ -42,6 +42,8 @@ export default async function SettingsPage() {
         radarMarkets={cfg?.radarMarkets ?? []}
         dailyCallBudget={cfg?.dailyCallBudget ?? 60}
         dnc={dncList}
+        canManageSettings={can(session.role, "manageSettings")}
+        canManageCompliance={can(session.role, "manageCompliance")}
         user={{ name: session.name, email: session.email, orgName: session.orgName }}
         currency={
           <CurrencySettings

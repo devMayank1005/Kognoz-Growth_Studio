@@ -18,7 +18,7 @@ import { checkBudget, logModelCall } from "@/engine/budget";
 import { PROSE_MODEL, engineConfigError } from "@/engine/client";
 import { CONSTANTS_CURRENCY } from "@/domain/revenue";
 import { CORE_FLOOR, VALUE_CAP, WHALE_FLOOR, tierFor, type Tier } from "@/domain/routing";
-import { requireSession } from "@/lib/session";
+import { permissionError, requireSession } from "@/lib/session";
 import { queueZohoPush } from "@/lib/zoho/notify";
 
 /**
@@ -80,6 +80,8 @@ export type DraftResult =
 
 export async function generateDraft(opportunityId: string, kind?: DraftKind): Promise<DraftResult> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -198,6 +200,8 @@ export async function markDraftSent(
   kind: DraftKind,
 ): Promise<{ ok: true; patch: CardPatch; rotateOrPark: boolean } | { ok: false; message: string }> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -254,6 +258,8 @@ export type PacketResult = { ok: true; text: string; patch: Partial<CardPatch> }
 
 export async function dispatchPacket(opportunityId: string): Promise<PacketResult> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -320,6 +326,8 @@ export async function recordOutcome(
   outcome: Outcome,
 ): Promise<{ ok: true; patch: Partial<CardPatch> } | { ok: false; message: string }> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -370,6 +378,8 @@ export async function moveToStage(
   stage: (typeof stages)[number],
 ): Promise<{ ok: true; stage: string } | { ok: false; message: string }> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
   if (!stages.includes(stage)) return { ok: false, message: "Unknown stage." };
 
   const card = await loadCard(session.orgId, opportunityId);
@@ -438,6 +448,8 @@ export async function setCardValue(
   value: number,
 ): Promise<{ ok: true; value: number; tier: Tier; whale: boolean } | { ok: false; message: string }> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
 
   const money = await loadMoneyView(session.orgId);
   // Fails closed while a currency change is half-applied — see `constantsMatch`.
@@ -507,6 +519,8 @@ export async function dismissSignal(
   reason?: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const session = await requireSession();
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return denied;
 
   const [signal] = await db
     .select({ id: signals.id, accountId: signals.accountId, code: signals.code })

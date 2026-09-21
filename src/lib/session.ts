@@ -11,7 +11,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { retryOnConnectionError } from "@/db/retry";
 import { activities, member, organization } from "@/db/schema";
-import { isAllowedEmailDomain, parseAllowedDomains } from "@/domain/access";
+import { can, isAllowedEmailDomain, parseAllowedDomains, type Permission } from "@/domain/access";
 import { auth } from "@/lib/auth";
 import { readEnv } from "@/lib/env";
 
@@ -152,6 +152,43 @@ export async function requireSession(): Promise<StudioSession> {
   const result = await resolveStudioSession();
   if (!result.ok) redirect(result.reason === "no-access" ? "/no-access" : "/sign-in");
   return result.session;
+}
+
+/**
+ * The sentence an action returns when the role is not permitted.
+ *
+ * Phrased per permission because "you do not have permission" alone sends the
+ * operator to look for a setting rather than for whoever can grant it.
+ * `manageIntegrations` keeps its exact previous wording so the three call sites
+ * in actions/zoho.ts that already refused read identically.
+ */
+const PERMISSION_DENIED: Record<Permission, string> = {
+  manageIntegrations: "You do not have permission to change integrations.",
+  manageSettings: "You do not have permission to change settings.",
+  manageCompliance: "You do not have permission to change the do-not-contact list.",
+  managePipeline: "You do not have permission to change the pipeline.",
+};
+
+/**
+ * The authorization half of the guard, to sit under `requireSession()`.
+ *
+ * Returns the refusal, or null when permitted — so a call site reads
+ *
+ *     const denied = permissionError(session, "manageCompliance");
+ *     if (denied) return denied;
+ *
+ * and keeps the `{ ok: false, message }` shape every action already returns.
+ *
+ * It does not redirect and it does not throw. A permission failure is a normal
+ * answer the interface should show, not an exception: these are actions the UI
+ * ought to have hidden, and when it did not, the operator deserves the reason.
+ */
+export function permissionError(
+  session: StudioSession,
+  permission: Permission,
+): { ok: false; message: string } | null {
+  if (can(session.role, permission)) return null;
+  return { ok: false, message: PERMISSION_DENIED[permission] };
 }
 
 interface Membership {

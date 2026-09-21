@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canManageIntegrations, isAllowedEmailDomain, parseAllowedDomains } from "./access";
+import { can, canManageIntegrations, isAllowedEmailDomain, parseAllowedDomains, type Permission } from "./access";
 
 const ALLOWED = ["kognozconsulting.com"];
 
@@ -107,6 +107,64 @@ describe("canManageIntegrations", () => {
   it("fails closed on anything unrecognised", () => {
     for (const r of ["", "Admin", "OPERATOR", "superuser"]) {
       expect(canManageIntegrations(r), r).toBe(false);
+    }
+  });
+});
+
+const ALL_PERMISSIONS: Permission[] = [
+  "manageIntegrations",
+  "manageSettings",
+  "manageCompliance",
+  "managePipeline",
+];
+
+describe("can", () => {
+  it("gives operators and admins every permission", () => {
+    // Same reasoning as canManageIntegrations: operator is the only role ever
+    // written, so withholding anything from it locks out every real user.
+    for (const permission of ALL_PERMISSIONS) {
+      expect(can("operator", permission), permission).toBe(true);
+      expect(can("admin", permission), permission).toBe(true);
+    }
+  });
+
+  it("gives partners the pipeline and nothing else", () => {
+    // PRD §1: "draft/send notes under own name; log outcomes".
+    expect(can("partner", "managePipeline")).toBe(true);
+    expect(can("partner", "manageSettings")).toBe(false);
+    expect(can("partner", "manageCompliance")).toBe(false);
+    expect(can("partner", "manageIntegrations")).toBe(false);
+  });
+
+  it("gives viewers nothing — dashboard and revenue math only", () => {
+    for (const permission of ALL_PERMISSIONS) {
+      expect(can("viewer", permission), permission).toBe(false);
+    }
+  });
+
+  it("fails closed on an unrecognised role", () => {
+    // member.role is plain text with no CHECK constraint, and
+    // resolveStudioSession passes whatever it holds straight through. A typo
+    // must deny, not inherit a default.
+    for (const role of ["", "Admin", "OPERATOR", "superuser", "owner", "__proto__"]) {
+      for (const permission of ALL_PERMISSIONS) {
+        expect(can(role, permission), `${role}/${permission}`).toBe(false);
+      }
+    }
+  });
+
+  it("protects the do-not-contact list from every role that is not an operator or admin", () => {
+    // The regression that motivated the whole permission table: removeFromDnc
+    // was reachable by anyone signed in, and deleting an entry makes the next
+    // add sail through the §8 gate that was working correctly.
+    expect(can("viewer", "manageCompliance")).toBe(false);
+    expect(can("partner", "manageCompliance")).toBe(false);
+    expect(can("operator", "manageCompliance")).toBe(true);
+  });
+
+  it("agrees with canManageIntegrations for every role", () => {
+    for (const role of ["admin", "operator", "partner", "viewer", "nonsense"]) {
+      expect(can(role, "manageIntegrations"), role).toBe(canManageIntegrations(role));
     }
   });
 });

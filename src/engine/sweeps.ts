@@ -36,11 +36,61 @@ export interface SweepOutcome {
 
 const MAX_ATTEMPTS = 3; // one attempt plus the two retries §4.1 asks for
 
-export async function runSweep(sweep: SweepDefinition, now: Date = new Date()): Promise<SweepOutcome> {
+/**
+ * Wall-clock budget for ONE sweep, retries included.
+ *
+ * Every `step.run` is its own HTTP invocation of /api/inngest, so the platform's
+ * function duration limit applies to a single sweep — not to the eleven-sweep
+ * loop. That is what makes the loop survivable at all. But one sweep is an Opus
+ * call with five web searches and, on failure, up to two more plus backoff, and
+ * that can outrun the limit.
+ *
+ * A killed invocation is NOT the returned error this function promises. The step
+ * fails, `retries` re-runs it, and when those are exhausted `daily-sweep` dies
+ * with `post-morning-brief` never reached — so every other sweep's findings are
+ * written but nobody is told, which is the opposite of §11's "partial results,
+ * visible errors".
+ *
+ * So stop before the ceiling and report. 240s against the 300s declared in
+ * src/app/api/inngest/route.ts; the headroom covers `persistSweep`, which runs
+ * in the same step. Raise both together, never one.
+ */
+const BUDGET_MS = 240_000;
+
+/**
+ * Is there room for another attempt?
+ *
+ * Pure, so the arithmetic is testable without an Anthropic key — the impure
+ * caller supplies the clock. `lastAttemptMs` is the estimator, because an
+ * attempt that just took 90s is the best available evidence for what the next
+ * one costs. Starting one with less than that left is how a sweep gets killed
+ * instead of reported, which is the whole failure this guards.
+ */
+export function hasRoomForRetry(opts: {
+  attempt: number;
+  maxAttempts: number;
+  elapsedMs: number;
+  lastAttemptMs: number;
+  backoffMs: number;
+  budgetMs: number;
+}): boolean {
+  if (opts.attempt >= opts.maxAttempts) return false;
+  return opts.elapsedMs + opts.backoffMs + opts.lastAttemptMs <= opts.budgetMs;
+}
+
+export async function runSweep(
+  sweep: SweepDefinition,
+  now: Date = new Date(),
+  budgetMs: number = BUDGET_MS,
+): Promise<SweepOutcome> {
   const started = Date.now();
   let lastError = "";
+  let attemptsMade = 0;
+  let outOfBudget = false;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const attemptStarted = Date.now();
+    attemptsMade = attempt;
     try {
       const response = await client.messages.parse({
         model: PROSE_MODEL,
@@ -79,14 +129,31 @@ export async function runSweep(sweep: SweepDefinition, now: Date = new Date()): 
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
       // Back off a little before retrying; a rate limit needs a moment.
-      if (attempt < MAX_ATTEMPTS) await sleep(attempt * 2_000);
+      const backoffMs = attempt * 2_000;
+      if (
+        !hasRoomForRetry({
+          attempt,
+          maxAttempts: MAX_ATTEMPTS,
+          elapsedMs: Date.now() - started,
+          lastAttemptMs: Date.now() - attemptStarted,
+          backoffMs,
+          budgetMs,
+        })
+      ) {
+        outOfBudget = attempt < MAX_ATTEMPTS;
+        break;
+      }
+      await sleep(backoffMs);
     }
   }
 
+  const plural = attemptsMade === 1 ? "attempt" : "attempts";
   return {
     id: sweep.id, title: sweep.title, kind: sweep.kind, market: sweep.market,
     items: [], dropped: [],
-    error: `failed after ${MAX_ATTEMPTS} attempts: ${lastError}`,
+    error: outOfBudget
+      ? `stopped after ${attemptsMade} ${plural} — ${Math.round(budgetMs / 1_000)}s budget would not cover another: ${lastError}`
+      : `failed after ${attemptsMade} ${plural}: ${lastError}`,
     latencyMs: Date.now() - started,
   };
 }

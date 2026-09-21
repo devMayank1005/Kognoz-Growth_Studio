@@ -11,7 +11,7 @@ import { activities, dnc, partnerTowers, settings, user } from "@/db/schema";
 import { rateFromDecimal } from "@/domain/money";
 import { TOWER_KEYS } from "@/domain/practices";
 import { refreshFxRate, type FxUpdate } from "@/lib/fx";
-import { requireSession } from "@/lib/session";
+import { permissionError, requireSession } from "@/lib/session";
 
 /**
  * Settings (PRD §9.9). Admin-facing configuration.
@@ -32,6 +32,8 @@ const towerEnum = z.enum(TOWER_KEYS);
  */
 export async function renamePartner(tower: string, name: string) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
 
   const parsedTower = towerEnum.safeParse(tower);
   const clean = name.trim();
@@ -61,6 +63,8 @@ const orgSettingsSchema = z.object({
 
 export async function saveOrgSettings(input: unknown) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
   const parsed = orgSettingsSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false as const, message: parsed.error.issues[0]?.message ?? "Those settings are not valid." };
@@ -82,6 +86,8 @@ export async function saveOrgSettings(input: unknown) {
  */
 export async function saveDisplayCurrency(input: unknown) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
   const parsed = z.enum(["USD", "INR"]).safeParse(input);
   if (!parsed.success) return { ok: false as const, message: "Unknown currency." };
 
@@ -106,6 +112,8 @@ export async function saveDisplayCurrency(input: unknown) {
  */
 export async function saveFxRate(input: unknown) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
 
   const parsed = z
     .number()
@@ -150,6 +158,8 @@ export async function fetchFxRate(): Promise<
   { ok: true; status: FxUpdate["status"]; rate?: number } | { ok: false; message: string }
 > {
   const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
 
   try {
     // Guarded like the sweep's `refresh-fx` step guards it: `refreshFxRate`
@@ -167,6 +177,8 @@ export async function fetchFxRate(): Promise<
 
 export async function clearFxOverride() {
   const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
   await db
     .update(settings)
     .set({ fxManualOverride: false })
@@ -190,6 +202,8 @@ export async function clearFxOverride() {
  */
 export async function saveZohoBcc(input: unknown) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageIntegrations");
+  if (denied) return denied;
 
   const parsed = z
     .string()
@@ -222,6 +236,8 @@ export async function saveZohoBcc(input: unknown) {
 
 export async function addToDnc(name: string, reason: string) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageCompliance");
+  if (denied) return denied;
   const clean = name.trim();
   if (!clean) return { ok: false as const, message: "Name required." };
 
@@ -243,6 +259,8 @@ export async function addToDnc(name: string, reason: string) {
 
 export async function removeFromDnc(name: string) {
   const session = await requireSession();
+  const denied = permissionError(session, "manageCompliance");
+  if (denied) return denied;
   await db.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, name)));
 
   await db.insert(activities).values({

@@ -51,19 +51,68 @@ export function parseAllowedDomains(raw: string | null | undefined): string[] {
 export type AccessRole = "operator" | "partner" | "viewer" | "admin";
 
 /**
+ * What each role may do — PRD §1's table, turned into something the server can
+ * check.
+ *
+ * Before this there was one predicate, `canManageIntegrations`, called at four
+ * sites. Twenty-two of the twenty-five server actions were therefore role-blind,
+ * including `removeFromDnc` — so any signed-in user could delete a
+ * do-not-contact entry, and the DNC gate in this same layer would then correctly
+ * wave the next add through. A server action is a public endpoint: a hidden
+ * button is not a control, and for the DNC list the button was not even hidden.
+ */
+export type Permission =
+  /** Connect or disconnect Zoho, flip dry run, set the dropbox. §1: Admin; Operator "keep Zoho true". */
+  | "manageIntegrations"
+  /** Partners, towers, ICP, radar markets, call budget, FX rate, display currency. §1: Admin. */
+  | "manageSettings"
+  /** The do-not-contact list. §1 gives Admin "DNC"; §8 makes it a hard rule. */
+  | "manageCompliance"
+  /** Add cards, move stages, draft, dispatch, record outcomes, dismiss signals. §1: Operator. */
+  | "managePipeline";
+
+/**
+ * **Operator is granted everything, deliberately** — the same reasoning
+ * `canManageIntegrations` has always carried. `DEFAULT_ROLE` in
+ * `src/lib/session.ts` is "operator" and nothing in this codebase ever writes
+ * "admin", so withholding a permission from operator locks out every existing
+ * user including the founder, and presents as a broken feature rather than as a
+ * permission decision. Tighten when a real admin role exists and someone holds it.
+ *
+ * Partner gets the pipeline only — §1: "draft/send notes under own name; log
+ * outcomes". Viewer gets nothing — §1: "Dashboard and revenue math only".
+ * Neither role is ever written today, so both are statements of intent.
+ */
+/**
+ * A Map, not an object literal, because the key is untrusted.
+ *
+ * `member.role` is plain text with no CHECK constraint and
+ * `resolveStudioSession` passes whatever it holds straight through, so the
+ * lookup key can be any string. On an object, `ROLE_PERMISSIONS["__proto__"]`
+ * resolves to `Object.prototype` — truthy, without `.includes` — so `can()`
+ * threw a TypeError instead of denying. A thrown guard does refuse, but as an
+ * unhandled 500 with no message, and "fails closed" has to mean `false`.
+ * `Map.get` returns undefined for every key nobody put in it.
+ */
+const ROLE_PERMISSIONS = new Map<AccessRole, readonly Permission[]>([
+  ["admin", ["manageIntegrations", "manageSettings", "manageCompliance", "managePipeline"]],
+  ["operator", ["manageIntegrations", "manageSettings", "manageCompliance", "managePipeline"]],
+  ["partner", ["managePipeline"]],
+  ["viewer", []],
+]);
+
+/** Fails closed: an unrecognised role gets nothing. */
+export function can(role: AccessRole | string, permission: Permission): boolean {
+  return ROLE_PERMISSIONS.get(role as AccessRole)?.includes(permission) ?? false;
+}
+
+/**
  * Who may wire this workspace to an external system.
  *
- * PRD §2 gives Admin "Settings: partners, towers, ICP, radar markets, Zoho",
- * and gives Operator "keep Zoho true". **Operator is included deliberately**:
- * `DEFAULT_ROLE` in `src/lib/session.ts` is "operator" and nothing in the
- * codebase ever writes "admin", so gating on admin alone would lock every
- * existing user — including the founder — out of the Connect button, and it
- * would present as a broken feature rather than as a permission decision.
- *
- * Partners and viewers are excluded: connecting acts on the live CRM.
- *
- * One place to tighten the moment a real admin role exists.
+ * Kept as a named predicate because three call sites and a route read better for
+ * it, and because its own reasoning is worth keeping next to the thing it gates.
+ * Delegates now, so there is one table to change.
  */
 export function canManageIntegrations(role: AccessRole | string): boolean {
-  return role === "admin" || role === "operator";
+  return can(role, "manageIntegrations");
 }

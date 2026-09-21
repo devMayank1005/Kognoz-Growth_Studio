@@ -204,9 +204,12 @@ export async function disconnectZoho(): Promise<
  * Settings", which was impossible: the same dead-control problem the push leg
  * was built to fix, one layer up.
  *
- * It lives in this file, not `settings.ts`, so it inherits the server-side
- * permission guard. `settings.ts` checks permission in the UI only, and this is
- * the switch that lets records into a client's live CRM.
+ * It lives in this file, not `settings.ts`, because this file was once the only
+ * one with a server-side permission guard. `settings.ts` had none — not in the
+ * UI either, contrary to what this comment used to claim — so every action in it
+ * was role-blind. Both are guarded now (`permissionError` in src/lib/session.ts);
+ * this one stays here because it is the switch that lets records into a client's
+ * live CRM and it reads better beside the connection it acts on.
  */
 export async function setZohoDryRun(
   on: boolean,

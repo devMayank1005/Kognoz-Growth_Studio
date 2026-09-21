@@ -16,6 +16,7 @@ interface TowerRow {
 
 export function SettingsForm({
   towers, icpText, radarMarkets, dailyCallBudget, dnc, user, zoho, currency,
+  canManageSettings, canManageCompliance,
 }: {
   towers: TowerRow[];
   icpText: string;
@@ -26,12 +27,21 @@ export function SettingsForm({
   /** Rendered by the page, which is where the connection is loaded. */
   zoho: React.ReactNode;
   currency: React.ReactNode;
+  /**
+   * Both actions behind these are guarded on the server as well, and that is
+   * the control — a server action is a public endpoint and a disabled button
+   * stops nobody. These exist so a role that cannot act is not invited to try.
+   * `zoho` and `currency` have had their own `canManage` since they were built;
+   * this half of the form had none at all.
+   */
+  canManageSettings: boolean;
+  canManageCompliance: boolean;
 }) {
   return (
     <div className="mt-8 space-y-10">
-      <Partners towers={towers} />
-      <OrgSettings icpText={icpText} radarMarkets={radarMarkets} dailyCallBudget={dailyCallBudget} />
-      <DncList names={dnc} />
+      <Partners towers={towers} canManage={canManageSettings} />
+      <OrgSettings icpText={icpText} radarMarkets={radarMarkets} dailyCallBudget={dailyCallBudget} canManage={canManageSettings} />
+      <DncList names={dnc} canManage={canManageCompliance} />
       {currency}
       <Appearance />
       <Account user={user} />
@@ -41,7 +51,7 @@ export function SettingsForm({
 }
 
 /** The rename promised when the placeholders were seeded. */
-function Partners({ towers }: { towers: TowerRow[] }) {
+function Partners({ towers, canManage }: { towers: TowerRow[]; canManage: boolean }) {
   const [names, setNames] = useState(() => Object.fromEntries(towers.map((t) => [t.key, t.partner])));
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -58,7 +68,7 @@ function Partners({ towers }: { towers: TowerRow[] }) {
             />
             <button
               type="button"
-              disabled={busy === t.key || names[t.key] === t.partner}
+              disabled={!canManage || busy === t.key || names[t.key] === t.partner}
               onClick={async () => {
                 setBusy(t.key);
                 const r = await renamePartner(t.key, names[t.key] ?? "");
@@ -77,7 +87,7 @@ function Partners({ towers }: { towers: TowerRow[] }) {
   );
 }
 
-function OrgSettings({ icpText, radarMarkets, dailyCallBudget }: { icpText: string; radarMarkets: string[]; dailyCallBudget: number }) {
+function OrgSettings({ icpText, radarMarkets, dailyCallBudget, canManage }: { icpText: string; radarMarkets: string[]; dailyCallBudget: number; canManage: boolean }) {
   const [icp, setIcp] = useState(icpText);
   const [markets, setMarkets] = useState(radarMarkets.join(", "));
   const [budget, setBudget] = useState(String(dailyCallBudget));
@@ -110,7 +120,7 @@ function OrgSettings({ icpText, radarMarkets, dailyCallBudget }: { icpText: stri
 
       <button
         type="button"
-        disabled={busy}
+        disabled={!canManage || busy}
         onClick={async () => {
           setBusy(true);
           const r = await saveOrgSettings({
@@ -131,7 +141,7 @@ function OrgSettings({ icpText, radarMarkets, dailyCallBudget }: { icpText: stri
 }
 
 /** §8 — the operator-facing half of do-not-contact. */
-function DncList({ names }: { names: string[] }) {
+function DncList({ names, canManage }: { names: string[]; canManage: boolean }) {
   const [name, setName] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -150,7 +160,7 @@ function DncList({ names }: { names: string[] }) {
               <span className="text-body">{n}</span>
               <button
                 type="button"
-                disabled={removing === n}
+                disabled={!canManage || removing === n}
                 onClick={async () => {
                   // Unblocking a company re-enables add, draft AND packet for it,
                   // so this is the most destructive control in Settings. It used
@@ -201,7 +211,7 @@ function DncList({ names }: { names: string[] }) {
         />
         <button
           type="button"
-          disabled={busy || !name.trim()}
+          disabled={!canManage || busy || !name.trim()}
           onClick={async () => {
             setBusy(true);
             const r = await addToDnc(name, reason);

@@ -24,32 +24,83 @@ import { zohoCreateCard, zohoPushCard, zohoSyncAll } from "./zoho";
  * per-sweep retry and partial results — which is what §11's "sweeps degrade
  * gracefully, partial results, visible errors" actually requires.
  */
+interface SweepEvent {
+  data: { orgId: string; by?: string };
+}
+
+/**
+ * The cron's only job is to say WHICH orgs to sweep.
+ *
+ * Split out of `daily-sweep` so that function can require an org id instead of
+ * guessing one. It used to guess: `select id from organization limit 1`, with no
+ * ORDER BY and with `event.data.orgId` — which /api/sweeps/run has always sent —
+ * never read. One org made that look correct. Two would have spent eleven Opus
+ * calls researching org A's universe on org B's request, written the findings
+ * into org A, and posted the brief to org A's operators, while org B's own
+ * request was swallowed by a debounce it shared. A cross-tenant write that
+ * nothing logged.
+ *
+ * Fanning out one event per org also means a failure sweeping one org does not
+ * touch another's.
+ */
+export const dailySweepCron = inngest.createFunction(
+  {
+    id: "daily-sweep-cron",
+    retries: 1,
+    concurrency: { limit: 1 },
+    // PRD §4.1: 05:30 local. The operator is in India.
+    triggers: [{ cron: "TZ=Asia/Kolkata 30 5 * * *" }],
+  },
+  async ({ step }) => {
+    const orgs = await step.run("list-orgs", async () => {
+      // ORDER BY so the set is stable run to run; `limit 1` with no order was
+      // the bug this function exists to remove.
+      const rows = await db.select({ id: organization.id }).from(organization).orderBy(organization.id);
+      if (rows.length === 0) throw new Error("no organization — run pnpm db:seed");
+      return rows;
+    });
+
+    // Inside a step so a retry of this function does not re-send: Inngest
+    // memoizes a completed step rather than re-running it.
+    await step.run("fan-out", async () => {
+      await inngest.send(
+        orgs.map((org) => ({ name: SWEEP_EVENT, data: { orgId: org.id, by: "cron" } })),
+      );
+      return { sent: orgs.length };
+    });
+
+    return { orgs: orgs.length };
+  },
+);
+
 export const dailySweep = inngest.createFunction(
   {
     id: "daily-sweep",
     retries: 1,
     /**
-     * One run at a time, and at most one every five minutes.
+     * One run at a time PER ORG, and one every five minutes per org.
      *
      * /api/sweeps/run had no throttle and the palette had no in-flight guard, so
      * pressing ⌘K → "run the sweep again" N times launched N concurrent runs of
      * eleven Opus calls each, with up to five web searches per call.
+     *
+     * Both are keyed on the org now. Unkeyed, org B's request inside the window
+     * was dropped because org A had just swept — the debounce silently enforced
+     * one sweep per five minutes across the whole installation.
+     *
+     * Note this is a debounce, not a throttle: it DELAYS until the period passes
+     * without a new event, so the 05:30 cron lands at 05:35. That is intended —
+     * the brief is read hours later — but it is why there is no `timeout` here.
      */
-    concurrency: { limit: 1 },
-    debounce: { period: "5m" },
-    triggers: [
-      // PRD §4.1: 05:30 local. The operator is in India.
-      { cron: "TZ=Asia/Kolkata 30 5 * * *" },
-      // Same function, fired on demand by "run the sweep again".
-      { event: SWEEP_EVENT },
-    ],
+    concurrency: [{ limit: 1, key: "event.data.orgId" }],
+    debounce: { period: "5m", key: "event.data.orgId" },
+    // Event only. The cron fires `dailySweepCron`, which sends one of these per org.
+    triggers: [{ event: SWEEP_EVENT }],
   },
-  async ({ step }) => {
-    const org = await step.run("resolve-org", async () => {
-      const [row] = await db.select({ id: organization.id }).from(organization).limit(1);
-      if (!row) throw new Error("no organization — run pnpm db:seed");
-      return row;
-    });
+  async ({ event, step }: { event: SweepEvent; step: { run: <T>(id: string, fn: () => Promise<T>) => Promise<T> } }) => {
+    const orgId = event.data.orgId;
+    if (!orgId) throw new Error("sweep event carried no orgId — refusing to guess which tenant to sweep");
+    const org = { id: orgId };
 
     /**
      * Refresh the USD -> INR rate before anything that might price a deal.
@@ -151,4 +202,4 @@ export const dailySweep = inngest.createFunction(
   },
 );
 
-export const functions = [dailySweep, zohoCreateCard, zohoPushCard, zohoSyncAll];
+export const functions = [dailySweepCron, dailySweep, zohoCreateCard, zohoPushCard, zohoSyncAll];

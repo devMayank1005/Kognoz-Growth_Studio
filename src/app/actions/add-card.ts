@@ -14,7 +14,7 @@ import { makeCard, type EngineRow } from "@/domain/routing";
 import { constantsMatch, MIGRATION_IN_PROGRESS } from "@/domain/money";
 import { CONSTANTS_CURRENCY } from "@/domain/revenue";
 import { loadMoneyView } from "@/lib/money-view";
-import { requireSession } from "@/lib/session";
+import { permissionError, requireSession } from "@/lib/session";
 import { queueZohoPush } from "@/lib/zoho/notify";
 
 /**
@@ -42,7 +42,7 @@ const rowSchema = z.object({
 
 export type AddCardResult =
   | { ok: true; id: string; account: string; practice: string; tower: string; partner: string; value: number; tier: string; stage: string }
-  | { ok: false; reason: "dnc" | "duplicate" | "invalid"; message: string };
+  | { ok: false; reason: "dnc" | "duplicate" | "invalid" | "forbidden"; message: string };
 
 const LIVE_STAGES = ["Prospect", "Plan reach-out", "Reached out", "In conversation", "Meeting set", "Proposal"] as const;
 
@@ -51,6 +51,12 @@ export async function addCard(
   options?: { stage?: "Prospect" | "Plan reach-out" },
 ): Promise<AddCardResult> {
   const session = await requireSession();
+  // Carries a reason because every other refusal here does: `action-table.tsx`
+  // switches on it to decide whether the row is permanently blocked or merely
+  // idle, and a refusal with no reason would have widened that union for every
+  // caller.
+  const denied = permissionError(session, "managePipeline");
+  if (denied) return { ...denied, reason: "forbidden" as const };
 
   const money = await loadMoneyView(session.orgId);
   // The other write that prices a card. Same reason as `setCardValue`: during a
