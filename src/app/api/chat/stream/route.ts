@@ -25,6 +25,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
+ * A long question is still a question; a novel is a mistake or an attack.
+ * 8,000 characters is roughly 2,000 tokens, comfortably past anything an
+ * operator types and far short of anything worth paying Opus to read.
+ */
+const MAX_MESSAGE_CHARS = 8_000;
+const MAX_BODY_BYTES = 64 * 1024;
+
+/**
  * The chat front door.
  *
  * Order is deliberate:
@@ -47,9 +55,30 @@ export async function POST(request: Request) {
     );
   }
 
+  /**
+   * Bounded before it is read, and again after.
+   *
+   * This is the most expensive endpoint in the product — one Opus 5 call with up
+   * to three web searches, then a Haiku extraction — and it accepted a body of
+   * any size and a `message` of any length. There is no rate limit anywhere in
+   * the app; the per-org daily budget counts CALLS, so one enormous message cost
+   * exactly as much budget as one word while costing far more to serve.
+   *
+   * Content-Length is a hint, not a guarantee, so the length of the parsed
+   * message is what actually decides. The header check just avoids buffering
+   * megabytes to find that out.
+   */
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return Response.json({ error: "too-large", message: "That message is too long." }, { status: 413 });
+  }
+
   const body = (await request.json()) as { message?: string; conversationId?: string | null };
   const message = String(body.message ?? "").trim();
   if (!message) return new Response("message is required", { status: 400 });
+  if (message.length > MAX_MESSAGE_CHARS) {
+    return Response.json({ error: "too-large", message: "That message is too long." }, { status: 413 });
+  }
 
   /**
    * Resolve which conversation this belongs to, before streaming starts.

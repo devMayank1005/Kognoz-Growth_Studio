@@ -7,10 +7,12 @@ import { db } from "@/db/client";
 import {
   createConversation,
   deleteConversation,
+  MAX_TURNS,
   renameConversation,
   restoreConversation,
   type ConversationTurn,
 } from "@/db/conversations";
+import { engineChartSchema, engineRowSchema, scrubRow } from "@/engine/schemas";
 import { activities } from "@/db/schema";
 import { requireSession } from "@/lib/session";
 
@@ -23,6 +25,37 @@ import { requireSession } from "@/lib/session";
  */
 
 const id = z.string().uuid();
+
+/**
+ * Undo hands the whole conversation back from the browser, so it is input.
+ *
+ * `rename` and `remove` have always validated their id; `undoRemove` took
+ * `{ title, turns }` and passed it straight to an insert. Turns are rendered on
+ * /chat, and an engine turn's `rows` each render a live ＋ Add button — so a
+ * forged array was stored content driving the app's primary action. `addCard`
+ * re-validates every row it receives, which capped the damage at a
+ * plausible-looking card rather than an arbitrary write, but nothing capped the
+ * size of what was stored or what it could claim.
+ *
+ * Built from the engine's own schemas rather than a second description of the
+ * same shape, and the rows go through `scrubRow` so §8 holds on the way back in
+ * exactly as it does on the way out.
+ */
+const turnSchema = z.object({
+  role: z.enum(["user", "engine"]),
+  text: z.string().max(20_000),
+  chart: engineChartSchema.nullish(),
+  rows: z.array(engineRowSchema).max(8).optional(),
+  kind: z.enum(["brief", "answer"]).optional(),
+  at: z.string().max(40),
+});
+
+const restoreSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  // The same ceiling `appendTurns` trims to, so Undo cannot restore a
+  // conversation longer than one the app would ever keep.
+  turns: z.array(turnSchema).max(MAX_TURNS),
+});
 
 export async function newConversation(): Promise<{ ok: true; id: string }> {
   const session = await requireSession();
@@ -77,13 +110,23 @@ export async function remove(
 /** Undo. Restores under a new id — the old one is gone for good. */
 export async function undoRemove(
   removed: RemovedConversation,
-): Promise<{ ok: true; id: string }> {
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const session = await requireSession();
+
+  const parsed = restoreSchema.safeParse(removed);
+  if (!parsed.success) return { ok: false as const, message: "That conversation could not be restored." };
+
+  const turns = parsed.data.turns.map((turn) => ({
+    ...turn,
+    chart: turn.chart ?? null,
+    rows: turn.rows?.map(scrubRow),
+  })) as ConversationTurn[];
+
   const conversationId = await restoreConversation(
     session.orgId,
     session.userId,
-    removed.title,
-    removed.turns,
+    parsed.data.title,
+    turns,
   );
   revalidatePath("/chat");
   return { ok: true, id: conversationId };

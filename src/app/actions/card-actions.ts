@@ -3,16 +3,17 @@
 import { revalidatePath } from "next/cache";
 
 import { and, desc, eq } from "drizzle-orm";
+import { z } from "zod";
 
 import { db, withOrg } from "@/db/client";
 import { accounts, activities, dnc, drafts, opportunities, people, settings, signals, stages, user } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
-import { applyOutcome, type Outcome } from "@/domain/outcomes";
+import { applyOutcome, OUTCOMES, type Outcome } from "@/domain/outcomes";
 import { constantsMatch, formatCompact, MIGRATION_IN_PROGRESS } from "@/domain/money";
 import { buildPacket } from "@/domain/packet";
 import { loadMoneyView } from "@/lib/money-view";
 import { practiceById } from "@/domain/practices";
-import { afterSend, defaultDraftKind, type DraftKind } from "@/domain/touches";
+import { afterSend, defaultDraftKind, DRAFT_KINDS, type DraftKind } from "@/domain/touches";
 import { writeDraft } from "@/engine/draft";
 import { checkBudget, logModelCall } from "@/engine/budget";
 import { PROSE_MODEL, engineConfigError } from "@/engine/client";
@@ -28,6 +29,26 @@ import { queueZohoPush } from "@/lib/zoho/notify";
  * All three check the do-not-contact list. PRD §8 says "enforced on add,
  * draft, and packet" — three call sites, one tested rule.
  */
+
+/**
+ * Runtime schemas for arguments that arrive from the browser.
+ *
+ * Every one of these is typed in the signature and none of it was checked. A
+ * server action is a public endpoint: `recordOutcome("...", "banana")` reached
+ * `applyOutcome`, which does `GRID[outcome]` and then reads `rule.stage` off
+ * undefined -- a TypeError, and so an unhandled 500 rather than a refusal.
+ *
+ * The ids matter as much. These columns are `uuid`, so a non-uuid string reaches
+ * Postgres as `invalid input syntax for type uuid`, which is also a 500. Cheaper
+ * to say "not found".
+ */
+const idSchema = z.string().uuid();
+const outcomeSchema = z.enum(OUTCOMES);
+const draftKindSchema = z.enum(DRAFT_KINDS);
+/** Written into `activities.payload_json`, so it needs a ceiling. */
+const reasonSchema = z.string().trim().max(500).optional();
+
+const badRequest = (message: string) => ({ ok: false as const, message });
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -82,6 +103,10 @@ export async function generateDraft(opportunityId: string, kind?: DraftKind): Pr
   const session = await requireSession();
   const denied = permissionError(session, "managePipeline");
   if (denied) return denied;
+  if (!idSchema.safeParse(opportunityId).success) return badRequest("Card not found.");
+  if (kind !== undefined && !draftKindSchema.safeParse(kind).success) {
+    return badRequest("That is not a kind of draft this app writes.");
+  }
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -202,6 +227,11 @@ export async function markDraftSent(
   const session = await requireSession();
   const denied = permissionError(session, "managePipeline");
   if (denied) return denied;
+  if (!idSchema.safeParse(opportunityId).success) return badRequest("Card not found.");
+  if (!idSchema.safeParse(draftId).success) return badRequest("Draft not found.");
+  if (!draftKindSchema.safeParse(kind).success) {
+    return badRequest("That is not a kind of draft this app writes.");
+  }
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -260,6 +290,7 @@ export async function dispatchPacket(opportunityId: string): Promise<PacketResul
   const session = await requireSession();
   const denied = permissionError(session, "managePipeline");
   if (denied) return denied;
+  if (!idSchema.safeParse(opportunityId).success) return badRequest("Card not found.");
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -328,6 +359,9 @@ export async function recordOutcome(
   const session = await requireSession();
   const denied = permissionError(session, "managePipeline");
   if (denied) return denied;
+  if (!idSchema.safeParse(opportunityId).success) return badRequest("Card not found.");
+  // Unknown outcomes used to reach GRID[outcome] and crash on rule.stage.
+  if (!outcomeSchema.safeParse(outcome).success) return badRequest("That is not an outcome this app records.");
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
 
@@ -381,6 +415,7 @@ export async function moveToStage(
   const denied = permissionError(session, "managePipeline");
   if (denied) return denied;
   if (!stages.includes(stage)) return { ok: false, message: "Unknown stage." };
+  if (!idSchema.safeParse(opportunityId).success) return badRequest("Card not found.");
 
   const card = await loadCard(session.orgId, opportunityId);
   if (!card) return { ok: false, message: "Card not found." };
@@ -418,6 +453,9 @@ export async function moveToStage(
 /** Timeline for the inspector (§5): every add, draft, send, packet, outcome. */
 export async function loadTimeline(opportunityId: string) {
   const session = await requireSession();
+  // A read, but the column is `uuid`: a malformed id is a Postgres syntax error
+  // and therefore a 500. An empty timeline is the honest answer.
+  if (!idSchema.safeParse(opportunityId).success) return [];
   return db
     .select({
       type: activities.type,
@@ -457,6 +495,7 @@ export async function setCardValue(
     return { ok: false, message: MIGRATION_IN_PROGRESS };
   }
 
+  if (!idSchema.safeParse(opportunityId).success) return badRequest("Card not found.");
   if (!Number.isFinite(value) || value < 0) return { ok: false, message: "Value must be a positive number." };
   if (value > VALUE_CAP) {
     return { ok: false, message: `That value looks wrong — cap is ${formatCompact(VALUE_CAP, money.base)}.` };
@@ -521,6 +560,9 @@ export async function dismissSignal(
   const session = await requireSession();
   const denied = permissionError(session, "managePipeline");
   if (denied) return denied;
+  if (!idSchema.safeParse(signalId).success) return badRequest("Signal not found.");
+  const parsedReason = reasonSchema.safeParse(reason);
+  if (!parsedReason.success) return badRequest("That reason is too long.");
 
   const [signal] = await db
     .select({ id: signals.id, accountId: signals.accountId, code: signals.code })
@@ -539,7 +581,7 @@ export async function dismissSignal(
       orgId: session.orgId,
       accountId: signal.accountId,
       type: "signal_dismissed",
-      payloadJson: { signalId, code: signal.code, reason: reason ?? "" },
+      payloadJson: { signalId, code: signal.code, reason: parsedReason.data ?? "" },
       actorId: session.userId,
     });
   });

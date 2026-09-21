@@ -24,6 +24,17 @@ import { permissionError, requireSession } from "@/lib/session";
 const towerEnum = z.enum(TOWER_KEYS);
 
 /**
+ * Ceilings on the free text these actions store.
+ *
+ * All of it arrived from the browser unchecked: `.trim()` was called straight on
+ * the argument, which throws on a non-string, and nothing capped the length of
+ * values that go into `user.name` or into `activities.payload_json`.
+ */
+const nameSchema = z.string().trim().min(1).max(120);
+const dncNameSchema = z.string().trim().min(1).max(200);
+const dncReasonSchema = z.string().trim().max(500);
+
+/**
  * Rename a tower's partner.
  *
  * This is why `partner_towers` exists: routing used to match the tower key
@@ -36,9 +47,13 @@ export async function renamePartner(tower: string, name: string) {
   if (denied) return denied;
 
   const parsedTower = towerEnum.safeParse(tower);
-  const clean = name.trim();
+  // `.trim()` on the raw argument threw on anything that was not a string, and
+  // the length was unbounded — this writes to the shared `user` row, which every
+  // packet and draft carries.
+  const parsedName = nameSchema.safeParse(name);
   if (!parsedTower.success) return { ok: false as const, message: "Unknown tower." };
-  if (!clean) return { ok: false as const, message: "A partner needs a name." };
+  if (!parsedName.success) return { ok: false as const, message: "A partner needs a name." };
+  const clean = parsedName.data;
 
   const [row] = await db
     .select({ userId: partnerTowers.userId })
@@ -238,19 +253,22 @@ export async function addToDnc(name: string, reason: string) {
   const session = await requireSession();
   const denied = permissionError(session, "manageCompliance");
   if (denied) return denied;
-  const clean = name.trim();
-  if (!clean) return { ok: false as const, message: "Name required." };
+  const parsedName = dncNameSchema.safeParse(name);
+  const parsedReason = dncReasonSchema.safeParse(reason ?? "");
+  if (!parsedName.success) return { ok: false as const, message: "Name required." };
+  if (!parsedReason.success) return { ok: false as const, message: "That reason is too long." };
+  const clean = parsedName.data;
 
   await db
     .insert(dnc)
-    .values({ id: randomUUID(), orgId: session.orgId, name: clean, kind: "company", reason: reason.trim() || null, addedBy: session.userId })
+    .values({ id: randomUUID(), orgId: session.orgId, name: clean, kind: "company", reason: parsedReason.data || null, addedBy: session.userId })
     .onConflictDoNothing({ target: [dnc.orgId, dnc.name] });
 
   // §8 wants an audit entry on every write, and this one governs who we may
   // contact — exactly the kind that should be traceable.
   await db.insert(activities).values({
     orgId: session.orgId, type: "note",
-    payloadJson: { action: "dnc_added", name: clean, reason }, actorId: session.userId,
+    payloadJson: { action: "dnc_added", name: clean, reason: parsedReason.data }, actorId: session.userId,
   });
 
   revalidatePath("/settings");
@@ -261,11 +279,14 @@ export async function removeFromDnc(name: string) {
   const session = await requireSession();
   const denied = permissionError(session, "manageCompliance");
   if (denied) return denied;
-  await db.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, name)));
+  const parsedName = dncNameSchema.safeParse(name);
+  if (!parsedName.success) return { ok: false as const, message: "Name required." };
+  const clean = parsedName.data;
+  await db.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, clean)));
 
   await db.insert(activities).values({
     orgId: session.orgId, type: "note",
-    payloadJson: { action: "dnc_removed", name }, actorId: session.userId,
+    payloadJson: { action: "dnc_removed", name: clean }, actorId: session.userId,
   });
 
   revalidatePath("/settings");

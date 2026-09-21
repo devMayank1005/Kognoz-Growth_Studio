@@ -39,7 +39,8 @@ export interface ConversationSummary {
 }
 
 /** Keep a stored conversation bounded; the operator scrolls, they do not archive. */
-const MAX_TURNS = 200;
+/** Exported so the Undo action can bound what it accepts to the same ceiling. */
+export const MAX_TURNS = 200;
 
 /**
  * The switcher's list. The brief sorts first so it is always in the same place,
@@ -64,12 +65,22 @@ export interface LoadedConversation extends ConversationSummary {
   turns: ConversationTurn[];
 }
 
+/**
+ * `conversations.id` is a `uuid` column, so a malformed id is not a miss — it
+ * reaches Postgres as `invalid input syntax for type uuid`, throws, and becomes
+ * a 500. Both callers take the value straight from the browser (`?c=` on
+ * /api/thread, the request body on /api/chat/stream) and both were documented as
+ * treating a malformed id as "resolves to nothing". This is what makes that true.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Loads one conversation, or null when it is missing or belongs to someone else. */
 export async function loadConversation(
   orgId: string,
   userId: string,
   id: string,
 ): Promise<LoadedConversation | null> {
+  if (!UUID.test(id)) return null;
   const [row] = await db
     .select({
       id: conversations.id,

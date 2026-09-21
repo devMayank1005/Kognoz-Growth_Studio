@@ -15,9 +15,19 @@ export const PARK_DAYS = 90;
 /** An ordinary send expects a reply inside the working week. */
 const FOLLOW_UP_DAYS = 5;
 
-export type DraftKind =
-  | "first-touch" | "congrats" | "follow-up" | "value-add"
-  | "meeting-confirm" | "proposal-nudge" | "linkedin-pov";
+/**
+ * A const array, not a bare type union, so a zod schema can be built from it.
+ *
+ * `generateDraft` and `markDraftSent` take the kind straight from the browser
+ * and it reaches `afterSend` and the mail prompt; a type union cannot check that
+ * at runtime. One list, so the guard cannot drift from the thing it guards.
+ */
+export const DRAFT_KINDS = [
+  "first-touch", "congrats", "follow-up", "value-add",
+  "meeting-confirm", "proposal-nudge", "linkedin-pov",
+] as const;
+
+export type DraftKind = (typeof DRAFT_KINDS)[number];
 
 /** Stages that a send should advance to "Reached out". */
 const EARLY: readonly string[] = ["Prospect", "Plan reach-out"];

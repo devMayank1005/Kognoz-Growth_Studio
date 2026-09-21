@@ -143,6 +143,9 @@ export function ConversationSwitcher({
           onClick: () => {
             void undoRemove(r.removed)
               .then((back) => {
+                // Undo can now refuse: the action validates what the browser
+                // hands back rather than inserting it unread.
+                if (!back.ok) return toast.error(back.message);
                 toast.success(`“${title}” restored`);
                 router.push(`/chat?c=${back.id}`);
               })

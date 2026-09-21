@@ -216,6 +216,11 @@ export async function setZohoDryRun(
 ): Promise<{ ok: true; dryRun: boolean } | { ok: false; message: string }> {
   const session = await requireSession();
   if (!canManageIntegrations(session.role)) return forbidden;
+  // The signature says boolean; a server action is a public endpoint and the
+  // signature is not a runtime check. `.set({ zohoDryRun: "no" })` would have
+  // reached the column, and this is the switch that decides whether records
+  // enter a client's live CRM.
+  if (typeof on !== "boolean") return { ok: false as const, message: "Dry run is either on or off." };
 
   const updated = await db
     .update(settings)
