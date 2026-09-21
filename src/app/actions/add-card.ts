@@ -10,7 +10,7 @@ import { loadPartnerUserIds, loadPartnersByTower } from "@/db/queries";
 import { isDoNotContact } from "@/domain/dnc";
 import { industryOf } from "@/domain/industry";
 import { practiceByName } from "@/domain/practices";
-import { makeCard, type EngineRow } from "@/domain/routing";
+import { makeCard, VALUE_CAP, type EngineRow } from "@/domain/routing";
 import { constantsMatch, MIGRATION_IN_PROGRESS } from "@/domain/money";
 import { CONSTANTS_CURRENCY } from "@/domain/revenue";
 import { loadMoneyView } from "@/lib/money-view";
@@ -36,7 +36,10 @@ const rowSchema = z.object({
   industry: z.string().optional(),
   trigger: z.string().optional(),
   signal: z.string().optional(),
-  value: z.number().int().positive().optional(),
+  // Capped, not just positive. `setCardValue` has always had a ceiling and this
+  // path had none, so a crafted row carried a value the `integer` column cannot
+  // hold and Postgres answered `integer out of range` — a 500, not a refusal.
+  value: z.number().int().positive().max(VALUE_CAP).optional(),
   url: z.string().optional(),
 });
 

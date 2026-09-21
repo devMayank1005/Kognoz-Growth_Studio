@@ -46,7 +46,7 @@ export const settings = pgTable("settings", {
   zohoOrgId: text("zoho_org_id"),
   icpText: text("icp_text").notNull(),
   radarMarkets: text("radar_markets").array().notNull().default([]),
-  /** Target share of new-logo work, 0-1. PRD §0 locks this at 0.70. */
+  /** Target share of new-logo work as a PERCENTAGE — 70, not 0.70. PRD §0 locks it at 70%. */
   mixNewRatio: integer("mix_new_ratio").notNull().default(70),
   zohoBcc: text("zoho_bcc"),
   doctrineJson: jsonb("doctrine_json").$type<Record<string, unknown>>(),

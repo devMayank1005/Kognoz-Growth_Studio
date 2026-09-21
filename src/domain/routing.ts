@@ -7,7 +7,7 @@
  */
 
 import { practiceByName, towerOfPractice } from "./practices";
-import type { TowerKey } from "./revenue";
+import { PROGRAM_TARGET, type TowerKey } from "./revenue";
 
 export const STAGES = [
   "Prospect",
@@ -33,13 +33,24 @@ export const CORE_FLOOR = 25_000_000;
 export const WHALE_FLOOR = 50_000_000;
 
 /**
- * The largest value that can be typed on a card: ₹1000Cr.
+ * The largest value that can be typed on a card: ₹200Cr, the whole programme.
  *
  * Was a bare `100_000_000` inside `setCardValue` with a "$100M" message beside
  * it. Left alone it would have become a ₹10Cr cap — roughly $1.1M — and started
- * refusing perfectly ordinary whale deals.
+ * refusing perfectly ordinary whale deals. It was then set to ₹1000Cr, which
+ * overcorrected into a different bug: **`opportunities.value` is `integer`**, so
+ * int4's ceiling is 2,147,483,647 and a cap of 10,000,000,000 was 4.7× a number
+ * the column cannot hold. A value near ₹300Cr passed this guard, passed
+ * `setCardValue`, and reached Postgres as `integer out of range` — an unhandled
+ * 500 rather than the refusal this constant exists to produce.
+ *
+ * `PROGRAM_TARGET` is the honest bound and it fits: no single deal can be worth
+ * more than the entire 18-month commitment, and ₹200Cr is 40× `WHALE_FLOOR`, so
+ * nothing plausible is refused. `drizzle/0019` carries the same number as a CHECK
+ * constraint, so the database refuses it too — raise both together, and never
+ * above int4 without widening the column first.
  */
-export const VALUE_CAP = 10_000_000_000;
+export const VALUE_CAP = PROGRAM_TARGET;
 export type Tier = "wedge" | "core" | "whale";
 
 /** A row as the engine emits it. Deliberately carries no personal contact fields. */
