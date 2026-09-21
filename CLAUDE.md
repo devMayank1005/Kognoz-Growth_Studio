@@ -278,15 +278,21 @@ includes views.
   form, not in a prompt, not searched for. Company-published generic mailboxes only; never guessed.
 - **DNC blocks add, draft, and packet** — every path, enforced in the domain layer.
 - Every mutation writes an audit entry.
-- **Org isolation is enforced ONCE, in the repository layer.** Every query filters on the session's
-  `orgId`. **Postgres RLS is not enabled** — verified 2026-09-04: `pg_policies` is empty, 0 of 22
-  tables have `relrowsecurity`, and both connection strings use `neondb_owner`, which has
-  `rolbypassrls = true`, so policies would be ignored even if added. `withOrg()` sets an
-  `app.org_id` GUC that nothing currently reads; it is kept because it is the hook real policies
-  would use. Do not describe this as two layers. Adding a second org REQUIRES doing RLS first:
-  policies on all **13** org-scoped tables plus a NOBYPASSRLS application role. The thirteenth is
-  `zoho_connections`, and it is the one to start with — it is the only table holding encrypted
-  third-party credentials.
+- **Org isolation is enforced in the repository layer, and now has a policy underneath it that is
+  not yet switched on.** Every query filters on the session's `orgId`. `drizzle/0018` creates RLS
+  policies on all **15** org-scoped tables (the count was recorded here as 13 and was wrong — count
+  from the schema, never from this line; `zoho_push_attempts` is the sixteenth policy and `people`
+  the seventeenth, scoped through its account because it has no `org_id` column) plus the
+  NOBYPASSRLS role `growth_app`. `tests/integration/rls.test.ts` proves the policies deny by
+  connecting as that role.
+  **But `DATABASE_URL` still connects as `neondb_owner`, which bypasses RLS, so it is not enforcing
+  anything today.** Do not describe this as two layers yet. Switching over requires the read path
+  to run inside a transaction first: `withOrg()` wraps writes only, `current_setting('app.org_id',
+  true)` is NULL outside it, and `org_id = NULL` is never true — so flipping the role right now
+  makes every page in the app render empty. The cost is three extra round trips per read (BEGIN,
+  set_config, COMMIT), which is ~700ms from India to `us-east-2`; the `ap-south-1` move in
+  docs/CLAIM-NEON.md is what makes it affordable. Until then the explicit `orgId` predicate is
+  still the isolation.
 - **`withOrg()` is not inert, whatever the GUC sentence above implies.** It is a real
   transaction, and `src/lib/zoho/token.ts` depends on that for `SELECT … FOR UPDATE` on the
   connection row — flattening it into a plain query removes the token-refresh lock and lets N

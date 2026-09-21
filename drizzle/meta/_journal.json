@@ -127,6 +127,13 @@
       "when": 1789990321891,
       "tag": "0017_zoho_push_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789990800934,
+      "tag": "0018_row_level_security",
+      "breakpoints": true
     }
   ]
 }
