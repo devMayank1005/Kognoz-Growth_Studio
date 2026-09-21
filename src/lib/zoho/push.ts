@@ -267,12 +267,29 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
   return { status: isCreate ? "created" : "updated", account: card.account, action, summary };
 }
 
-/** The card must not go. Not a failure to retry — a decision. */
+/**
+ * The card must not go. Not a failure to retry — a decision.
+ *
+ * Audited, because it is a decision. A quarantined card stops reaching the
+ * client's CRM and nothing recorded that happening, so the pipeline simply showed
+ * a pill and the timeline showed nothing at all.
+ */
 async function block(orgId: string, opportunityId: string, reason: string): Promise<void> {
-  await db
-    .update(opportunities)
-    .set({ zohoBlockedAt: new Date(), zohoSyncError: (redactSecrets(reason) ?? reason).slice(0, 400) })
-    .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)));
+  const error = (redactSecrets(reason) ?? reason).slice(0, 400);
+  await withOrg(orgId, async (tx) => {
+    await tx
+      .update(opportunities)
+      .set({ zohoBlockedAt: new Date(), zohoSyncError: error })
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)));
+
+    await tx.insert(activities).values({
+      orgId,
+      opportunityId,
+      type: "note",
+      payloadJson: { action: "zoho_blocked", reason: error },
+      actorId: null,
+    });
+  });
 }
 
 /**
@@ -304,17 +321,39 @@ async function recordFailure(
   spendStrike = true,
 ): Promise<void> {
   const error = (redactSecrets(reason) ?? reason).slice(0, 400);
-  await db
-    .update(opportunities)
-    .set(
-      spendStrike
-        ? {
-            zohoSyncAttempts: sql`${opportunities.zohoSyncAttempts} + 1`,
-            zohoSyncError: error,
-            // Five failures is a card that is not going to start working by itself.
-            zohoBlockedAt: sql`case when ${opportunities.zohoSyncAttempts} + 1 >= 5 then now() else null end`,
-          }
-        : { zohoSyncError: error },
-    )
-    .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)));
+
+  await withOrg(orgId, async (tx) => {
+    const [row] = await tx
+      .update(opportunities)
+      .set(
+        spendStrike
+          ? {
+              zohoSyncAttempts: sql`${opportunities.zohoSyncAttempts} + 1`,
+              zohoSyncError: error,
+              // Five failures is a card that is not going to start working by itself.
+              zohoBlockedAt: sql`case when ${opportunities.zohoSyncAttempts} + 1 >= 5 then now() else null end`,
+            }
+          : { zohoSyncError: error },
+      )
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)))
+      .returning({ attempts: opportunities.zohoSyncAttempts, blockedAt: opportunities.zohoBlockedAt });
+
+    /**
+     * Audited only when the strike actually quarantined the card.
+     *
+     * Deliberately not once per failure: `zohoSyncAll` pushes serially and Inngest
+     * retries each card three times, so a Zoho outage would write a row per card
+     * per attempt and bury the entries that matter under its own noise. The
+     * crossing into blocked is the event worth keeping.
+     */
+    if (row?.blockedAt) {
+      await tx.insert(activities).values({
+        orgId,
+        opportunityId,
+        type: "note",
+        payloadJson: { action: "zoho_blocked", reason: error, attempts: row.attempts },
+        actorId: null,
+      });
+    }
+  });
 }

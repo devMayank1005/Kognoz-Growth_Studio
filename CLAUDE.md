@@ -277,7 +277,19 @@ includes views.
   source only. No email, phone, address, or personal social columns — not in the schema, not in a
   form, not in a prompt, not searched for. Company-published generic mailboxes only; never guessed.
 - **DNC blocks add, draft, and packet** — every path, enforced in the domain layer.
-- Every mutation writes an audit entry.
+- **Most mutations write an audit entry, and the ones that do write it in the same transaction.**
+  Not "every" — that was claimed here and was not true. What is audited: every card write
+  (`card-actions.ts`), every add, the DNC list both directions, membership provisioning, the Zoho
+  connect **and** disconnect, the dry-run switch, a manual FX rate and clearing its override, and a
+  card being quarantined from the CRM. Each of those now commits with its write rather than after it,
+  so a failure between the two cannot leave the write without its record.
+  Still **unaudited**, deliberately or not yet: `renamePartner`, `saveOrgSettings`,
+  `saveDisplayCurrency`, `saveZohoBcc`, the nightly `refreshFxRate`, and `persistSweep`'s accounts and
+  signals. Conversation create/rename/restore are unaudited **on purpose** — see the note further
+  down; only deletion is recorded.
+  A card quarantine is audited when it *happens*, not on every failed attempt: `zohoSyncAll` pushes
+  serially and Inngest retries three times, so a Zoho outage would otherwise write a row per card per
+  attempt and bury the entries that matter.
 - **Org isolation is enforced in the repository layer, and now has a policy underneath it that is
   not yet switched on.** Every query filters on the session's `orgId`. `drizzle/0018` creates RLS
   policies on all **15** org-scoped tables (the count was recorded here as 13 and was wrong — count

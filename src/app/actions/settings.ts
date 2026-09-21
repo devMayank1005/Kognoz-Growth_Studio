@@ -155,15 +155,32 @@ export async function saveFxRate(input: unknown) {
     return { ok: false as const, message: parsed.error.issues[0]?.message ?? "Not a valid rate." };
   }
 
-  await db
-    .update(settings)
-    .set({
-      fxUsdInr: rateFromDecimal(parsed.data),
-      fxUpdatedAt: new Date(),
-      fxSource: "manual",
-      fxManualOverride: true,
-    })
-    .where(eq(settings.orgId, session.orgId));
+  /**
+   * Audited, because this number prices every deal that reaches the CRM.
+   *
+   * It had no audit row at all. A rate typed here converts every Zoho Amount, and
+   * setting one also silences the nightly fetch via `fxManualOverride` — so a
+   * wrong figure persists until somebody notices, with nothing recording who set
+   * it or when. `type: 'note'` with `payload_json.action` is the convention the
+   * activity view already unwraps; the enum has no member for a settings change.
+   */
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(settings)
+      .set({
+        fxUsdInr: rateFromDecimal(parsed.data),
+        fxUpdatedAt: new Date(),
+        fxSource: "manual",
+        fxManualOverride: true,
+      })
+      .where(eq(settings.orgId, session.orgId));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "fx_rate_set", rate: parsed.data, source: "manual" },
+      actorId: session.userId,
+    });
+  });
 
   revalidatePath("/settings");
   return { ok: true as const };
@@ -205,10 +222,19 @@ export async function clearFxOverride() {
   const session = await requireSession();
   const denied = permissionError(session, "manageSettings");
   if (denied) return denied;
-  await db
-    .update(settings)
-    .set({ fxManualOverride: false })
-    .where(eq(settings.orgId, session.orgId));
+  // Also audited: handing the rate back to the nightly fetch changes which
+  // number prices the pipeline tomorrow.
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(settings)
+      .set({ fxManualOverride: false })
+      .where(eq(settings.orgId, session.orgId));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "fx_override_cleared" }, actorId: session.userId,
+    });
+  });
   revalidatePath("/settings");
   return { ok: true as const };
 }

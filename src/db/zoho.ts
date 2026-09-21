@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 
 import { db, withOrg, type Db, type Tx } from "@/db/client";
-import { zohoConnections } from "@/db/schema";
+import { activities, zohoConnections } from "@/db/schema";
 import type { ZohoDc } from "@/domain/zoho/dc";
 import {
   accessTokenAad, cryptoConfigError, currentKeyId, decryptSecret,
@@ -178,6 +178,29 @@ export async function saveZohoConnection(input: ZohoConnectionInput): Promise<vo
           updatedAt: new Date(),
         },
       });
+
+    /**
+     * Connecting is audited too.
+     *
+     * `disconnectZoho` has always written a `zoho_disconnected` entry and connect
+     * wrote nothing, so the audit trail recorded the end of a CRM connection and
+     * never the start of one. It goes inside this transaction rather than in the
+     * callback route so it cannot be skipped by a caller.
+     *
+     * No token material, no scope string: §8 applies to diagnostics, and the
+     * connection row itself already holds what is needed.
+     */
+    await tx.insert(activities).values({
+      orgId: input.orgId,
+      type: "note",
+      payloadJson: {
+        action: "zoho_connected",
+        dc: input.dc,
+        zohoOrgName: input.zohoOrgName ?? null,
+        currency: input.zohoCurrency ?? null,
+      },
+      actorId: input.connectedByUserId ?? null,
+    });
   });
 }
 
