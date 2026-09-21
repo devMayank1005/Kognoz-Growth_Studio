@@ -63,6 +63,17 @@ export async function renamePartner(tower: string, name: string) {
 
   if (!row) return { ok: false as const, message: "No partner is assigned to that tower yet." };
 
+  /**
+   * Scoped by the lookup above, not by a predicate here — `user` is Better
+   * Auth's table and has no `org_id` to filter on.
+   *
+   * `row.userId` came from `partner_towers` filtered on this org, so only a
+   * partner of this workspace can be renamed. That is the whole control, and it
+   * is worth stating because the write itself looks unscoped: the name lives on
+   * the shared identity row, so it changes everywhere that person appears. The
+   * schema comment on `partner_towers` already notes this is the cost of not
+   * touching Better Auth's tables.
+   */
   await db.update(user).set({ name: clean, updatedAt: new Date() }).where(eq(user.id, row.userId));
 
   revalidatePath("/settings");

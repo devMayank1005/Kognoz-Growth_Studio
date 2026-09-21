@@ -113,6 +113,13 @@
       "when": 1789989323707,
       "tag": "0015_enum_check_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789989866978,
+      "tag": "0016_dedupe_unique_indexes",
+      "breakpoints": true
     }
   ]
 }

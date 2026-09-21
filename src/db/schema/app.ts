@@ -260,6 +260,17 @@ export const signals = pgTable(
   (t) => [
     index("signals_org_date_idx").on(t.orgId, t.date),
     index("signals_account_idx").on(t.accountId),
+    /**
+     * The dedupe `persistSweep` has always assumed it had.
+     *
+     * src/db/sweeps.ts selects on exactly these three columns and then inserts or
+     * updates, with the comment "re-running a sweep the same day should refresh a
+     * finding, not duplicate it". Under Read Committed, and with Inngest retrying
+     * a sweep step, two writers both saw no row and both inserted. Duplicated
+     * findings inflate an account's trigger count in `loadAccountList` and in the
+     * brief's ranking permanently, because nothing ever collapses them.
+     */
+    uniqueIndex("signals_account_code_date_uidx").on(t.accountId, t.code, t.date),
   ],
 );
 
@@ -369,6 +380,22 @@ export const opportunities = pgTable(
     // Zoho upserts are keyed on these; both must be idempotent.
     uniqueIndex("opportunities_zoho_lead_idx").on(t.zohoLeadId),
     uniqueIndex("opportunities_zoho_deal_idx").on(t.zohoDealId),
+    /**
+     * PRD §5's "dedup by account among live cards", enforced.
+     *
+     * `addCard` selects the account's live cards and then inserts, so two
+     * concurrent adds — a double-clicked ＋ Add — both passed the check and
+     * produced two live cards for one account. Each then queued its own Zoho
+     * create, so the duplicate reached the client's CRM as well.
+     *
+     * The predicate lists the live stages positively to match `LIVE_STAGES` in
+     * src/app/actions/add-card.ts exactly, rather than `not in ('Won','Lost')`:
+     * a future terminal stage would silently join a negated list. Change both
+     * together.
+     */
+    uniqueIndex("opportunities_one_live_per_account_uidx")
+      .on(t.orgId, t.accountId)
+      .where(sql`stage in ('Prospect', 'Plan reach-out', 'Reached out', 'In conversation', 'Meeting set', 'Proposal')`),
   ],
 );
 

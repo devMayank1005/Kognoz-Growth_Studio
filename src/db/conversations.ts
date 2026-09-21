@@ -254,18 +254,73 @@ export async function postBriefToOperators(
   let posted = 0;
   for (const { id: userId } of members) {
     const conversationId = await briefConversationId(orgId, userId);
-    const existing = await loadConversation(orgId, userId, conversationId);
-    const withoutToday = (existing?.turns ?? []).filter(
-      (t) => !(t.kind === "brief" && t.at.slice(0, 10) === today),
-    );
-
-    await db
-      .update(conversations)
-      .set({ messagesJson: [...withoutToday, turn].slice(-MAX_TURNS), updatedAt: new Date() })
-      .where(eq(conversations.id, conversationId));
-    posted++;
+    if (await replaceTodaysBrief(orgId, userId, conversationId, turn, today)) posted++;
   }
   return posted;
+}
+
+/**
+ * Drops today's brief and appends the new one, **in one UPDATE**.
+ *
+ * This used to be `loadConversation` -> filter in Node -> write the whole array
+ * back keyed on `id` alone: a lost update, and one that overwrote everything, so
+ * a chat turn arriving between the read and the write was destroyed. Exactly the
+ * pattern `appendTurns` above was rewritten to eliminate — and it sat two
+ * functions below it, which is why CLAUDE.md could truthfully say the lost update
+ * was fixed and verified at twenty concurrent appends while this writer still had
+ * it. The sweep runs at 05:30 and someone reading yesterday's brief over coffee
+ * is enough to lose a turn.
+ *
+ * Also scoped on org and user, not just the conversation id, like every other
+ * query in this file.
+ *
+ * `coalesce` on both extracted fields is load-bearing: an ordinary turn has no
+ * `kind`, so `e->>'kind'` is NULL, and `NOT (NULL = 'brief' AND ...)` is NULL —
+ * which jsonb_agg's WHERE treats as false and would have dropped every non-brief
+ * turn in the conversation.
+ */
+async function replaceTodaysBrief(
+  orgId: string,
+  userId: string,
+  conversationId: string,
+  turn: ConversationTurn,
+  today: string,
+): Promise<boolean> {
+  const added = JSON.stringify([turn]);
+  const result = await db.execute(sql`
+    with filtered as (
+      select
+        c.id,
+        coalesce(
+          (
+            select jsonb_agg(e order by n)
+            from jsonb_array_elements(c.messages_json) with ordinality as t(e, n)
+            where not (
+              coalesce(e->>'kind', '') = 'brief'
+              and left(coalesce(e->>'at', ''), 10) = ${today}
+            )
+          ),
+          '[]'::jsonb
+        ) || ${added}::jsonb as m
+      from conversations c
+      where c.id = ${conversationId} and c.org_id = ${orgId} and c.user_id = ${userId}
+    )
+    update conversations c
+    set messages_json = coalesce(
+          (
+            select jsonb_agg(e order by n)
+            from jsonb_array_elements(filtered.m) with ordinality as t(e, n)
+            where n > greatest(0, jsonb_array_length(filtered.m) - ${MAX_TURNS})
+          ),
+          '[]'::jsonb
+        ),
+        updated_at = now()
+    from filtered
+    where c.id = filtered.id
+    returning c.id
+  `);
+
+  return (result.rowCount ?? 0) > 0;
 }
 
 /**

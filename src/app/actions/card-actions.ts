@@ -301,7 +301,7 @@ export async function dispatchPacket(opportunityId: string): Promise<PacketResul
   const [latest] = await db
     .select({ subject: drafts.subject, body: drafts.body })
     .from(drafts)
-    .where(eq(drafts.opportunityId, opportunityId))
+    .where(and(eq(drafts.opportunityId, opportunityId), eq(drafts.orgId, session.orgId)))
     .orderBy(desc(drafts.createdAt))
     .limit(1);
 
@@ -335,7 +335,7 @@ export async function dispatchPacket(opportunityId: string): Promise<PacketResul
           : {}),
         updatedAt: new Date(),
       })
-      .where(eq(opportunities.id, opportunityId));
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, session.orgId)));
 
     await tx.insert(activities).values({
       orgId: session.orgId, opportunityId, accountId: card.accountId,
@@ -377,7 +377,7 @@ export async function recordOutcome(
         ...(effect.clearDispatched ? { dispatchedAt: null } : {}),
         updatedAt: new Date(),
       })
-      .where(eq(opportunities.id, opportunityId));
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, session.orgId)));
 
     await tx.insert(activities).values({
       orgId: session.orgId, opportunityId, accountId: card.accountId,
@@ -431,7 +431,7 @@ export async function moveToStage(
         ...(["In conversation", "Meeting set", "Proposal"].includes(stage) ? { dispatchedAt: null } : {}),
         updatedAt: new Date(),
       })
-      .where(eq(opportunities.id, opportunityId));
+      .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, session.orgId)));
 
     await tx.insert(activities).values({
       orgId: session.orgId,

@@ -67,6 +67,7 @@ export async function persistSweep(orgId: string, outcome: SweepOutcome): Promis
       .from(signals)
       .where(
         and(
+          eq(signals.orgId, orgId),
           eq(signals.accountId, accountId),
           eq(signals.code, item.signal),
           eq(signals.date, item.date),
@@ -78,7 +79,7 @@ export async function persistSweep(orgId: string, outcome: SweepOutcome): Promis
       await db
         .update(signals)
         .set({ headline: item.headline, evidence: item.evidence, url: item.url, confidence: item.confidence, sweepId: run.id })
-        .where(eq(signals.id, existing[0].id));
+        .where(and(eq(signals.id, existing[0].id), eq(signals.orgId, orgId)));
     } else {
       await db.insert(signals).values({
         orgId,
@@ -115,7 +116,7 @@ async function upsertAccount(
     await db
       .update(accounts)
       .set({ country: sql`coalesce(${accounts.country}, ${item.country})` })
-      .where(eq(accounts.id, known[0].id));
+      .where(and(eq(accounts.id, known[0].id), eq(accounts.orgId, orgId)));
     return { accountId: known[0].id, discovered: false };
   }
 

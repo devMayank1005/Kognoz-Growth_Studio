@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db, withOrg } from "@/db/client";
 import { loadDnc, loadPipeline } from "@/db/queries";
@@ -227,21 +227,30 @@ async function block(orgId: string, opportunityId: string, reason: string): Prom
     .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)));
 }
 
+/**
+ * Counts a failure. **One statement**, because the count is a circuit breaker.
+ *
+ * This read `zoho_sync_attempts`, added one in Node, and wrote it back. Two
+ * concurrent failures both read the same number and both wrote the same
+ * increment, so N failures could count as one and the "five strikes and
+ * quarantine" below might never fire — leaving a permanently rejected payload
+ * retried against Zoho forever, burning API credit on a request that cannot
+ * succeed. Per-card Inngest concurrency made the collision unlikely rather than
+ * impossible; the arithmetic belongs in SQL either way.
+ *
+ * Both expressions read the column, and inside an UPDATE's SET that is the OLD
+ * value — so the attempt count and the blocked decision cannot disagree about
+ * which attempt this is. `zoho_sync_attempts` is NOT NULL DEFAULT 0, so there is
+ * no null to coalesce.
+ */
 async function recordFailure(orgId: string, opportunityId: string, reason: string): Promise<void> {
-  const [row] = await db
-    .select({ n: opportunities.zohoSyncAttempts })
-    .from(opportunities)
-    .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)))
-    .limit(1);
-
-  const next = (row?.n ?? 0) + 1;
   await db
     .update(opportunities)
     .set({
-      zohoSyncAttempts: next,
+      zohoSyncAttempts: sql`${opportunities.zohoSyncAttempts} + 1`,
       zohoSyncError: (redactSecrets(reason) ?? reason).slice(0, 400),
       // Five failures is a card that is not going to start working by itself.
-      zohoBlockedAt: next >= 5 ? new Date() : null,
+      zohoBlockedAt: sql`case when ${opportunities.zohoSyncAttempts} + 1 >= 5 then now() else null end`,
     })
     .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)));
 }

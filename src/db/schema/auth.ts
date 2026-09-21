@@ -124,6 +124,17 @@ export const member = pgTable(
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
     index("member_userId_idx").on(table.userId),
+    /**
+     * One membership per person per workspace.
+     *
+     * `provisionMembership` in src/lib/session.ts selects a membership and then
+     * inserts one, so a new user opening two tabs on their first sign-in got two
+     * member rows and two audit rows. `resolveStudioSession` takes `.limit(1)`,
+     * so the duplicate was invisible until somebody counted. src/db/retry.ts
+     * already documents this hazard as the reason writes are never retried — the
+     * constraint is the actual fix and it was missing.
+     */
+    uniqueIndex("member_org_user_uidx").on(table.organizationId, table.userId),
   ],
 );
 

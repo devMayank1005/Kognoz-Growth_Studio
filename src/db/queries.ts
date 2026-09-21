@@ -381,6 +381,18 @@ export async function loadAccountDossier(orgId: string, accountId: string) {
     .limit(1);
   if (!account) return null;
 
+  /**
+   * Each child query carries `orgId` too, not just `accountId`.
+   *
+   * The account above is verified against the org first and every one of these
+   * hangs off its id, so this was already correct — but the argument for that
+   * lived in a reader's head rather than in the query, and RLS is not enabled to
+   * catch it if someone lifts one of these statements somewhere else.
+   *
+   * `people` is the exception: it has no `org_id` column at all (§8 keeps that
+   * table as narrow as possible), so the verified account is the only scoping
+   * available and the FK is what makes it sound.
+   */
   const [accountSignals, accountPeople, cards, timeline] = await Promise.all([
     db
       .select({
@@ -391,7 +403,7 @@ export async function loadAccountDossier(orgId: string, accountId: string) {
         confidence: signals.confidence,
       })
       .from(signals)
-      .where(and(eq(signals.accountId, accountId), isNull(signals.dismissedAt)))
+      .where(and(eq(signals.orgId, orgId), eq(signals.accountId, accountId), isNull(signals.dismissedAt)))
       .orderBy(desc(signals.date)),
     db
       .select({ name: people.name, role: people.role, source: people.source, verifiedAt: people.verifiedAt })
@@ -404,12 +416,12 @@ export async function loadAccountDossier(orgId: string, accountId: string) {
       })
       .from(opportunities)
       .leftJoin(user, eq(opportunities.partnerUserId, user.id))
-      .where(eq(opportunities.accountId, accountId)),
+      .where(and(eq(opportunities.orgId, orgId), eq(opportunities.accountId, accountId))),
     db
       .select({ type: activities.type, at: activities.at, actor: user.name })
       .from(activities)
       .leftJoin(user, eq(activities.actorId, user.id))
-      .where(eq(activities.accountId, accountId))
+      .where(and(eq(activities.orgId, orgId), eq(activities.accountId, accountId)))
       .orderBy(desc(activities.at))
       .limit(25),
   ]);
