@@ -233,6 +233,12 @@ export const people = pgTable(
     /** Public URL the name and title were read from. */
     source: text("source").notNull(),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    /**
+     * When the record was stored. `verifiedAt` is nullable and means something
+     * else — when a human confirmed the person is real — so it could not answer
+     * "when did this name enter the database", which is the §8 question.
+     */
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     zohoContactId: text("zoho_contact_id"),
   },
   (t) => [index("people_account_idx").on(t.accountId)],
@@ -255,6 +261,17 @@ export const signals = pgTable(
     date: date("date").notNull(),
     confidence: integer("confidence"),
     sweepId: uuid("sweep_id").references(() => sweepRuns.id, { onDelete: "set null" }),
+    /**
+     * When the finding was STORED, as distinct from `date`, which is when the
+     * news happened.
+     *
+     * There was no such column, and `drizzle/0016` had to work around its absence
+     * to de-duplicate: it ordered on `sweep_runs.started_at` because ids here are
+     * `gen_random_uuid()` and so carry no time at all. Anything asking "what did
+     * the radar find this week" had only the news date to go on, which is not the
+     * same question.
+     */
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
   },
   (t) => [
