@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyZohoError, describeZohoError } from "./errors";
+import { classifyZohoError, describeZohoError, spendsStrike } from "./errors";
 
 const err = (status: number, code: string | null = null, message = "x") => ({ status, code, message });
 
@@ -59,5 +59,34 @@ describe("classifyZohoError", () => {
     // and status may ever reach a message or a log.
     const message = describeZohoError(err(400, "INVALID_DATA", "rashid@emirates.com refused"));
     expect(message).not.toContain("@");
+  });
+});
+
+describe("spendsStrike", () => {
+  it("does not spend a strike on a 429", () => {
+    // The rule is in ZohoFailure's own definition: "Back off; do not count it
+    // toward disabling a connection." token.ts obeyed it; the card counter did not.
+    expect(spendsStrike("throttled")).toBe(false);
+  });
+
+  it("does not spend a strike on a network or Zoho-side failure", () => {
+    expect(spendsStrike("transient")).toBe(false);
+  });
+
+  it("spends a strike on a real refusal", () => {
+    // These will not start working by themselves, so the five-strike quarantine
+    // is exactly what should count them.
+    expect(spendsStrike("auth")).toBe(true);
+    expect(spendsStrike("scope")).toBe(true);
+    expect(spendsStrike("unknown")).toBe(true);
+  });
+
+  it("agrees with how pushCard routes a classified 429", () => {
+    // Guards the seam: classify a real 429 shape, then ask the question pushCard
+    // asks. A change to either side that breaks the pairing fails here.
+    expect(spendsStrike(classifyZohoError({ status: 429, code: "", message: "too many" }))).toBe(false);
+    expect(spendsStrike(classifyZohoError({ status: 503, code: "", message: "unavailable" }))).toBe(false);
+    expect(spendsStrike(classifyZohoError({ status: 0, code: "network", message: "socket" }))).toBe(false);
+    expect(spendsStrike(classifyZohoError({ status: 401, code: "INVALID_TOKEN", message: "no" }))).toBe(true);
   });
 });

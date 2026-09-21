@@ -4,7 +4,7 @@ import { db, withOrg } from "@/db/client";
 import { loadDnc, loadPipeline } from "@/db/queries";
 import { activities, opportunities, settings, zohoConnections } from "@/db/schema";
 import { isDoNotContact } from "@/domain/dnc";
-import { classifyZohoError, describeZohoError } from "@/domain/zoho/errors";
+import { classifyZohoError, describeZohoError, spendsStrike } from "@/domain/zoho/errors";
 import { LEAD_SOURCE } from "@/domain/zoho/fields";
 import { blockedReason, buildDeal, pushActionFor, toLead, type PushAction } from "@/domain/zoho/to-zoho";
 import { currencyCodeOf } from "@/domain/zoho/currency";
@@ -228,7 +228,9 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
     // A data refusal will never succeed on a retry — quarantine it rather than
     // burning credit on the same rejected payload.
     if (kind === "data") await block(orgId, opportunityId, message);
-    else await recordFailure(orgId, opportunityId, message);
+    // A 429 or a dropped socket is not the card's fault and must not spend a
+    // strike — see `spendsStrike` for the rule and the bug it closes.
+    else await recordFailure(orgId, opportunityId, message, spendsStrike(kind));
     return { status: "failed", account: card.account, action, reason: message };
   }
 
@@ -276,6 +278,12 @@ async function block(orgId: string, opportunityId: string, reason: string): Prom
 /**
  * Counts a failure. **One statement**, because the count is a circuit breaker.
  *
+ * With `spendStrike: false` it records the reason and NOTHING else — no
+ * increment, and `zoho_blocked_at` left exactly as it was. Deliberately not
+ * recomputed to null, which would clear a quarantine `block()` set over a real
+ * data refusal; and not recomputed at all, because a rate limit is no evidence
+ * either way about whether this card should be blocked.
+ *
  * This read `zoho_sync_attempts`, added one in Node, and wrote it back. Two
  * concurrent failures both read the same number and both wrote the same
  * increment, so N failures could count as one and the "five strikes and
@@ -289,14 +297,24 @@ async function block(orgId: string, opportunityId: string, reason: string): Prom
  * which attempt this is. `zoho_sync_attempts` is NOT NULL DEFAULT 0, so there is
  * no null to coalesce.
  */
-async function recordFailure(orgId: string, opportunityId: string, reason: string): Promise<void> {
+async function recordFailure(
+  orgId: string,
+  opportunityId: string,
+  reason: string,
+  spendStrike = true,
+): Promise<void> {
+  const error = (redactSecrets(reason) ?? reason).slice(0, 400);
   await db
     .update(opportunities)
-    .set({
-      zohoSyncAttempts: sql`${opportunities.zohoSyncAttempts} + 1`,
-      zohoSyncError: (redactSecrets(reason) ?? reason).slice(0, 400),
-      // Five failures is a card that is not going to start working by itself.
-      zohoBlockedAt: sql`case when ${opportunities.zohoSyncAttempts} + 1 >= 5 then now() else null end`,
-    })
+    .set(
+      spendStrike
+        ? {
+            zohoSyncAttempts: sql`${opportunities.zohoSyncAttempts} + 1`,
+            zohoSyncError: error,
+            // Five failures is a card that is not going to start working by itself.
+            zohoBlockedAt: sql`case when ${opportunities.zohoSyncAttempts} + 1 >= 5 then now() else null end`,
+          }
+        : { zohoSyncError: error },
+    )
     .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)));
 }
