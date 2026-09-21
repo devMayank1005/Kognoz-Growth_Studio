@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getTableColumns, getTableName, is } from "drizzle-orm";
@@ -20,8 +20,20 @@ import * as schema from "./index";
  * scripts/check-compliance.mts gives §8 by importing the pattern it checks.
  */
 
-const MIGRATION = "drizzle/0015_enum_check_constraints.sql";
-const sql = readFileSync(join(process.cwd(), MIGRATION), "utf8");
+/**
+ * Every migration, not just 0015.
+ *
+ * 0015 added the constraints for the columns that existed then; 0017 creates a
+ * table with its own enum column and adds one in the same file, which is where a
+ * new column's constraint belongs. Scanning the whole directory means that keeps
+ * working without anyone remembering to add a path here.
+ */
+const MIGRATIONS = join(process.cwd(), "drizzle");
+const sql = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => readFileSync(join(MIGRATIONS, f), "utf8"))
+  .join("\n");
 
 /** table -> column -> values, as the migration actually declares them. */
 function parseChecks(text: string): Map<string, Map<string, string[]>> {
@@ -64,7 +76,10 @@ describe("enum CHECK constraints", () => {
     // rather than silently pass every assertion below.
     expect(declared.size).toBeGreaterThan(0);
     const total = [...declared.values()].reduce((n, cols) => n + cols.size, 0);
-    expect(total).toBe(12);
+    const expected = [...actual.values()].reduce((n, cols) => n + cols.size, 0);
+    // Asserted against the schema rather than a literal, so adding an enum
+    // column and its constraint together does not need this number edited.
+    expect(total).toBe(expected);
   });
 
   it("covers every enum column in the schema", () => {

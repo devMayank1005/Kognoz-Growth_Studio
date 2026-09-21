@@ -399,6 +399,44 @@ export const opportunities = pgTable(
   ],
 );
 
+/**
+ * The intent log that keeps a retry from creating a second record in the
+ * client's CRM (PRD §10's "idempotent upserts").
+ *
+ * `createRecord` has no duplicate check and no external id, and the local
+ * `zoho_lead_id` is written in a separate transaction afterwards. Inngest
+ * delivers at least once with `retries: 3` and `pushActionFor` recomputes the
+ * action from the row, so a retry landing between those two writes saw a null
+ * `lead_id` and created the Lead again — in a system of record we do not own.
+ *
+ * One row per (card, module, key). `sent_at` is stamped immediately before the
+ * HTTP call and `remote_id` immediately after, which is what lets
+ * `decideCreate` tell "never called" from "called, outcome unknown". The unique
+ * index is the whole mechanism: the second execution's insert loses, reads the
+ * winner's row, and obeys it.
+ */
+export const zohoPushAttempts = pgTable(
+  "zoho_push_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: text("org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    opportunityId: uuid("opportunity_id").notNull().references(() => opportunities.id, { onDelete: "cascade" }),
+    /** "Leads" or "Deals" — the CRM module the record was created in. */
+    module: text("module", { enum: ["Leads", "Deals"] }).notNull(),
+    /** `pushAttemptKey`: the card id and its `updated_at`. */
+    key: text("key").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    remoteId: text("remote_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("zoho_push_attempts_key_uidx").on(t.opportunityId, t.module, t.key),
+    // "Which cards are in an unknown state?" is the question an operator asks
+    // after an outage, and it must not be a seq scan of the whole log.
+    index("zoho_push_attempts_org_idx").on(t.orgId, t.createdAt),
+  ],
+);
+
 /* ------------------------------------------------------ activity & audit */
 
 export const activityTypes = [

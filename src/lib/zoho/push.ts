@@ -9,6 +9,8 @@ import { LEAD_SOURCE } from "@/domain/zoho/fields";
 import { blockedReason, buildDeal, pushActionFor, toLead, type PushAction } from "@/domain/zoho/to-zoho";
 import { currencyCodeOf } from "@/domain/zoho/currency";
 import { loadMoneyView } from "@/lib/money-view";
+import { claimCreate, markCreateSent, recordCreateResult, type ZohoModule } from "@/db/zoho-attempts";
+import { pushAttemptKey } from "@/domain/zoho/idempotency";
 import { redactSecrets } from "@/lib/redact";
 import { toSyncCard } from "@/lib/zoho/card";
 import { createRecord, updateRecord } from "@/lib/zoho/records";
@@ -46,6 +48,9 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
     .select({
       leadId: opportunities.zohoLeadId,
       dealId: opportunities.zohoDealId,
+      // Read fresh here, not from the React-cached `loadPipeline` below: it is
+      // half of the idempotency key.
+      updatedAt: opportunities.updatedAt,
     })
     .from(opportunities)
     .where(and(eq(opportunities.id, opportunityId), eq(opportunities.orgId, orgId)))
@@ -178,9 +183,44 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
   const isCreate = action === "CREATE_LEAD" || action === "CREATE_DEAL";
   const existingId = zohoModule === LEAD ? row.leadId : row.dealId;
 
-  const result = isCreate
-    ? await createRecord(token.apiDomain, zohoModule, token.accessToken, payload)
-    : await updateRecord(token.apiDomain, zohoModule, existingId!, token.accessToken, payload);
+  /**
+   * A create is the only irreversible thing this function does, so it goes
+   * through the intent log (src/domain/zoho/idempotency.ts).
+   *
+   * Inngest delivers at least once with `retries: 3`, and `pushActionFor`
+   * recomputes the action from the row every time — which is right, and is
+   * exactly why a retry that ran after the remote write but before the local one
+   * saw a null `lead_id`, recomputed CREATE, and made a second Lead in the
+   * client's CRM. Up to four per card, unrollbackable, in a system of record we
+   * do not own. Latent only because `zoho_dry_run` defaults true.
+   *
+   * An update needs none of this: it is keyed on an id we already hold, so
+   * repeating it is harmless.
+   */
+  const crmModule = zohoModule as ZohoModule;
+  const attemptKey = isCreate ? pushAttemptKey(opportunityId, row.updatedAt) : null;
+  let adoptedId: string | null = null;
+
+  if (attemptKey) {
+    const decision = await claimCreate(orgId, opportunityId, crmModule, attemptKey);
+    if (decision.action === "unknown") {
+      // Refusing is the answer. Creating again risks a duplicate we cannot
+      // withdraw; the operator can look in the CRM in seconds.
+      const reason =
+        "An earlier push reached Zoho and its result was never recorded. Check the CRM for this company before pushing again.";
+      await block(orgId, opportunityId, reason);
+      return { status: "blocked", account: card.account, action, reason };
+    }
+    if (decision.action === "adopt") adoptedId = decision.remoteId;
+  }
+
+  if (attemptKey && !adoptedId) await markCreateSent(opportunityId, crmModule, attemptKey);
+
+  const result = adoptedId
+    ? ({ ok: true as const, data: { id: adoptedId, modifiedTime: undefined } })
+    : isCreate
+      ? await createRecord(token.apiDomain, zohoModule, token.accessToken, payload)
+      : await updateRecord(token.apiDomain, zohoModule, existingId!, token.accessToken, payload);
 
   if (!result.ok) {
     const kind = classifyZohoError(result.error);
@@ -190,6 +230,12 @@ export async function pushCard(orgId: string, opportunityId: string): Promise<Pu
     if (kind === "data") await block(orgId, opportunityId, message);
     else await recordFailure(orgId, opportunityId, message);
     return { status: "failed", account: card.account, action, reason: message };
+  }
+
+  // Before the local write, so the window that produced duplicates is now
+  // "attempt says created, card does not" — which a retry resolves by adopting.
+  if (attemptKey && !adoptedId) {
+    await recordCreateResult(opportunityId, crmModule, attemptKey, result.data.id);
   }
 
   await withOrg(orgId, async (tx) => {
