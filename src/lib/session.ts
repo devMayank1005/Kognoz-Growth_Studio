@@ -55,7 +55,9 @@ function hasSessionCookie(h: Headers): boolean {
  * `proxy.ts` only looks for a cookie so signed-out visitors bounce cheaply;
  * this validates the session and resolves which org and role the request runs
  * as. The orgId it returns is what every query filters on, and what
- * `withOrg()` pins in `app.org_id` for the RLS policies that do not exist yet.
+ * `withOrg()` pins in `app.org_id` for the RLS policies `drizzle/0018` created —
+ * which exist and deny correctly, but are bypassed because the app still connects
+ * as the owning role. See the note on `withOrg` in src/db/client.ts.
  *
  * Wrapped in React `cache()` so it runs once per request: the studio layout
  * and the page beneath it both call it, which was two session lookups and two

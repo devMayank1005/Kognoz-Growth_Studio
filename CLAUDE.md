@@ -137,7 +137,15 @@ region-move plan: `docs/CLAIM-NEON.md`.
 *failed run*; conflating them kept the status strip red all day after one transient 05:36
 failure) · `0009` `zoho_dry_run` · `0010` the four `opportunities.zoho_*` sync-state columns ·
 `0011`/`0012` the re-denomination · `0013` the `activity_log` view · `0014` a one-off account
-merge. `0013`+ are hand-written; `drizzle-kit generate --custom` writes the journal entry.
+merge · `0015` CHECK constraints for every text-enum column · `0016` the three unique indexes the
+select-then-insert paths assumed they had, plus the de-duplication they needed first · `0017`
+`zoho_push_attempts`, the intent log that stops a retry creating a second Lead · `0018` RLS policies
+and the `growth_app` role (created and tested, **not** enforcing — see `src/db/client.ts`) · `0019`
+numeric range constraints, written as `BETWEEN` because `enum-checks.test.ts` parses the `IN` form ·
+`0020` `activities` foreign keys to `SET NULL` so the audit trail outlives what it describes ·
+`0021` `created_at` on `signals` and `people`, backfilled in three steps so the history survives ·
+`0022` `activities(account_id, at desc)`.
+`0013`+ are hand-written; `drizzle-kit generate --custom` writes the journal entry.
 
 **`activity_log` is a view for reading the audit trail in the Neon console**, not for the app —
 nothing in `src/` queries it. It resolves `actor_id` to a name and unwraps

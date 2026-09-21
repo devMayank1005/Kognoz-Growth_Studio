@@ -127,10 +127,21 @@ export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /**
  * Run work inside a transaction with the org identity pinned in `app.org_id`.
  *
- * NOTE: no Postgres policy reads that GUC today — RLS is not enabled on any
- * table, and the app role bypasses it anyway. Isolation comes from the explicit
- * `orgId` filter in every query. This is kept as the hook real policies would
- * use, not as protection that exists.
+ * NOTE: `drizzle/0018` DOES enable RLS and create policies that read this GUC —
+ * seventeen of them, proven to deny by tests/integration/rls.test.ts. But
+ * `DATABASE_URL` still connects as `neondb_owner`, which has `rolbypassrls`, so
+ * they are not enforcing anything yet. Isolation still comes from the explicit
+ * `orgId` filter in every query.
+ *
+ * Switching over needs the READ path inside a transaction first. This function
+ * wraps writes only; `current_setting('app.org_id', true)` is NULL outside it and
+ * `org_id = NULL` is never true, so pointing DATABASE_URL at the `growth_app` role
+ * today would make every page render empty. The cost is three extra round trips
+ * per read — about 700ms at the RTT this file measures — which is why
+ * docs/CLAIM-NEON.md's ap-south-1 move is the thing that unblocks it.
+ *
+ * So: a real hook into real policies, one environment variable from being load
+ * bearing. Do not describe it as two layers until that variable changes.
  *
  * `SET LOCAL` scopes the setting to this transaction, so the value cannot leak
  * into the next request that borrows the same pooled connection.
