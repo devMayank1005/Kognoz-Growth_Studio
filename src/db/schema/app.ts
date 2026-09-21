@@ -462,8 +462,23 @@ export const activities = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: text("org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
-    opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "cascade" }),
-    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+    /**
+     * SET NULL, not cascade. PRD §8 requires the audit trail to survive the row
+     * it describes.
+     *
+     * Both were `cascade`, so deleting an account or a card silently deleted the
+     * entries recording what had been done to it. `drizzle/0014` had to repoint
+     * four audit rows by hand before deleting an account for exactly this reason,
+     * and its comment says so.
+     *
+     * A nulled row surviving is only useful if it still says WHAT it was about, and
+     * no payload writer carried the company name — so every writer now puts
+     * `account` in `payload_json`. Without that, SET NULL would have turned
+     * "audit row deleted" into "audit row that says nothing", which is worse for
+     * being harder to notice.
+     */
+    opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "set null" }),
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "set null" }),
     type: text("type", { enum: activityTypes }).notNull(),
     payloadJson: jsonb("payload_json").$type<Record<string, unknown>>(),
     actorId: text("actor_id").references(() => user.id, { onDelete: "set null" }),

@@ -238,6 +238,9 @@ export async function addCard(
       accountId: account.id,
       type: "added",
       payloadJson: {
+        // Carried so the entry still names the company once `account_id` is
+        // nulled by a delete — see the note on `activities` in the schema.
+        account: companyName,
         practice: card.practice,
         tower: card.tower,
         value: card.value,

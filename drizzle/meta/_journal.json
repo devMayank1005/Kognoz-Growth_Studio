@@ -141,6 +141,13 @@
       "when": 1789993795824,
       "tag": "0019_numeric_range_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1789994830446,
+      "tag": "0020_activities_survive_deletes",
+      "breakpoints": true
     }
   ]
 }
