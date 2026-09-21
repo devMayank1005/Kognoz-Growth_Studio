@@ -52,3 +52,26 @@ fixture signals and the partners from source. What a restore genuinely recovers:
 
 `pg_dump` must be at least the server's major version. At the time of writing both are **17.11**.
 A version-skew failure is loud, not silent, so if the dump succeeds the versions were compatible.
+
+## What `--verify` actually checks
+
+The table list is read from `information_schema` on both sides, never written into
+the script. It used to be a hardcoded array of 17 names against a schema of 24,
+and it omitted `conversations` — the table this README promises holds a
+recoverable morning brief — along with `zoho_push_attempts` and
+`zoho_connections`, while still counting the dead `threads`. The closing line said
+"every table matches", which could not be true of a table it never queried.
+
+Three checks now, in order:
+
+1. **The table sets must match.** A table that exists live and did not survive the
+   dump is named and the verify fails. This is the one a row count cannot make:
+   there is nothing on the restored side to count.
+2. **Row counts, table by table**, for every table found.
+3. **Content spot-checks**, because counts pass on an empty-but-present table — a
+   sourced signal, a draft's subject, and the brief conversations this README
+   promises.
+
+A successful run writes `backups/LAST-VERIFIED.md`. The dumps are gitignored
+because they hold real email addresses (PRD §8), so that file is the only evidence
+a backup was ever proved; commit it.
