@@ -17,6 +17,9 @@ export default defineConfig({
     environment: "node",
     include: ["tests/integration/**/*.test.ts"],
     exclude: ["tests/e2e/**", "node_modules/**"],
+    // Same .env.test preference as the E2E suite, so neither can write to real
+    // data by default. See tests/env.ts.
+    setupFiles: ["tests/integration/setup.ts"],
     // One database, shared. Parallel files would race on the fixtures.
     fileParallelism: false,
     testTimeout: 30_000,

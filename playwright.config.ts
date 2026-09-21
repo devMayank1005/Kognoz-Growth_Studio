@@ -1,11 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { loadTestEnv } from "./tests/env";
+
+// Prefers .env.test, so this suite's writes do not land on real data. See tests/env.ts.
+loadTestEnv();
+
 /**
  * E2E against a running dev server on 3001.
  *
- * Deliberately NOT starting the server here: it needs .env.local (a real Neon
- * connection and API key), so a webServer block would either duplicate that
- * config or fail confusingly. Start it with `pnpm dev` and run these against it.
+ * Deliberately NOT starting the server here: it needs a real connection and API
+ * key, so a webServer block would either duplicate that config or fail
+ * confusingly. Start it with `pnpm dev` and run these against it.
+ *
+ * Point the server at the SAME database as `.env.test`, or these assertions read
+ * one database while the UI writes another.
  */
 export default defineConfig({
   testDir: "tests/e2e",

@@ -133,30 +133,47 @@ test.describe("Kanban (§5) — usable without a mouse", () => {
     );
     test.skip(before.length === 0, "no movable card");
 
-    await page.goto("/pipeline?view=kanban");
-    const card = page.locator(`article[aria-label^="${before[0].name},"]`);
-    await expect(card).toBeVisible();
+    /**
+     * Restored afterwards, in a `finally` so a failed assertion still cleans up.
+     *
+     * This test moves a real card and leaves it moved — for as long as it has
+     * existed it has been permanently editing whichever database it ran against,
+     * which until `.env.test` was the live one. Putting the stage back also makes
+     * the test repeatable: its own WHERE clause excludes "Meeting set", so a
+     * second run used to skip itself.
+     *
+     * The `activities` row stays. It records something that genuinely happened,
+     * and §8 does not want audit entries deleted to tidy up after a test.
+     */
+    const original = before[0].stage;
+    try {
+      await page.goto("/pipeline?view=kanban");
+      const card = page.locator(`article[aria-label^="${before[0].name},"]`);
+      await expect(card).toBeVisible();
 
-    // No pointer events in this test. dnd-kit's simulated keyboard drag proved
-    // to be a mouse metaphor in a keyboard costume; an explicit stage control is
-    // how accessible boards actually work, so that is what gets exercised.
-    const stageSelect = card.getByRole("combobox");
-    await stageSelect.focus();
-    await expect(stageSelect).toBeFocused();
-    await stageSelect.selectOption("Meeting set");
+      // No pointer events in this test. dnd-kit's simulated keyboard drag proved
+      // to be a mouse metaphor in a keyboard costume; an explicit stage control is
+      // how accessible boards actually work, so that is what gets exercised.
+      const stageSelect = card.getByRole("combobox");
+      await stageSelect.focus();
+      await expect(stageSelect).toBeFocused();
+      await stageSelect.selectOption("Meeting set");
 
-    await expect(page.getByText(`${before[0].name} →`)).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(`${before[0].name} →`)).toBeVisible({ timeout: 10_000 });
 
-    const after = await query<{ stage: string }>(`select stage from opportunities where id = $1`, [before[0].id]);
-    expect(after[0].stage, "the stage actually changed in the database").toBe("Meeting set");
+      const after = await query<{ stage: string }>(`select stage from opportunities where id = $1`, [before[0].id]);
+      expect(after[0].stage, "the stage actually changed in the database").toBe("Meeting set");
 
-    // The same activity trail the outcome grid would leave.
-    const trail = await query<{ payload: { action?: string; via?: string } }>(
-      `select payload_json as payload from activities where opportunity_id = $1 order by at desc limit 1`,
-      [before[0].id],
-    );
-    expect(trail[0].payload.action).toBe("stage_moved");
-    expect(trail[0].payload.via).toBe("kanban");
+      // The same activity trail the outcome grid would leave.
+      const trail = await query<{ payload: { action?: string; via?: string } }>(
+        `select payload_json as payload from activities where opportunity_id = $1 order by at desc limit 1`,
+        [before[0].id],
+      );
+      expect(trail[0].payload.action).toBe("stage_moved");
+      expect(trail[0].payload.via).toBe("kanban");
+    } finally {
+      await query(`update opportunities set stage = $2 where id = $1`, [before[0].id, original]);
+    }
   });
 
   test("switching view keeps the active filter", async ({ page }, testInfo) => {

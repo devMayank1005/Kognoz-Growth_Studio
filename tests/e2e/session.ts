@@ -1,10 +1,11 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 
-import { config } from "dotenv";
 import pg from "pg";
 import type { BrowserContext } from "@playwright/test";
 
-config({ path: ".env.local", quiet: true });
+import { loadTestEnv } from "../env";
+
+loadTestEnv();
 
 /**
  * Sign-in is Microsoft SSO only, so there is no password to automate.
