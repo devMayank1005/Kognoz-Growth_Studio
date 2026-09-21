@@ -46,6 +46,26 @@ export type AddCardResult =
 
 const LIVE_STAGES = ["Prospect", "Plan reach-out", "Reached out", "In conversation", "Meeting set", "Proposal"] as const;
 
+/**
+ * The second argument is client input too.
+ *
+ * `input` has been zod-validated since this function was written; `options` was
+ * typed and nothing more. A server action is a public endpoint, its TypeScript
+ * signature is not a runtime check, and `stage` flowed through `makeCard`
+ * verbatim into the insert. `opportunities.stage` is `text(..., { enum })`,
+ * which Drizzle enforces only at compile time — there is no CHECK constraint in
+ * any migration — so `addCard(row, { stage: "Won" })` stored a won card. That
+ * lands in `closedValue` in the studio layout and in the $20M curve on the
+ * dashboard: corrupted revenue reporting, no error, nothing in the audit log to
+ * show what happened.
+ *
+ * `moveToStage` has always guarded its own stage argument (card-actions.ts).
+ * This is the same guard, 240 lines away, finally applied.
+ */
+const optionsSchema = z
+  .object({ stage: z.enum(["Prospect", "Plan reach-out"]).optional() })
+  .optional();
+
 export async function addCard(
   input: unknown,
   options?: { stage?: "Prospect" | "Plan reach-out" },
@@ -69,6 +89,12 @@ export async function addCard(
   const parsed = rowSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, reason: "invalid", message: "That row is missing a company name." };
+  }
+  const parsedOptions = optionsSchema.safeParse(options);
+  if (!parsedOptions.success) {
+    // Deliberately not echoed back: the only way to reach this is a crafted
+    // call, and a real caller cannot produce it.
+    return { ok: false, reason: "invalid", message: "A card can only be added as Prospect or Plan reach-out." };
   }
   const row = parsed.data as EngineRow;
   const companyName = row.company.replace(/^NEW:\s*/, "").trim();
@@ -138,7 +164,7 @@ export async function addCard(
 
   const card = makeCard(row, {
     partnerOf: (tower) => partnerNames[tower],
-    stage: options?.stage ?? "Prospect",
+    stage: parsedOptions.data?.stage ?? "Prospect",
   });
 
   // A named contact is only linked when we actually hold that person as a
