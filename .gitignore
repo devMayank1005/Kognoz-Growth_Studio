@@ -64,3 +64,10 @@ backups/*.sql
 
 .env.local
 .env.local.bak.1788767143
+
+# Claude Code. `settings.local.json` was ignored only by ~/.gitignore_global, so
+# on a fresh clone or a second machine it became committable. `worktrees/` is
+# where isolated checkouts land and must never be committed into the repo it is a
+# worktree of.
+.claude/settings.local.json
+.claude/worktrees/
