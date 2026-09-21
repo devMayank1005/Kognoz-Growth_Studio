@@ -8,7 +8,7 @@ import { redirect } from "next/navigation";
 
 import { sql } from "drizzle-orm";
 
-import { db } from "@/db/client";
+import { db, withOrg } from "@/db/client";
 import { retryOnConnectionError } from "@/db/retry";
 import { activities, member, organization } from "@/db/schema";
 import { can, isAllowedEmailDomain, parseAllowedDomains, type Permission } from "@/domain/access";
@@ -215,20 +215,34 @@ async function provisionMembership(user: { id: string; email: string }): Promise
     return null;
   }
 
-  await db.insert(member).values({
-    id: randomUUID(),
-    organizationId: org.id,
-    userId: user.id,
-    role: DEFAULT_ROLE,
-    createdAt: new Date(),
-  });
+  /**
+   * The grant and its audit row together.
+   *
+   * `0016` gave `member` a unique index on (organization_id, user_id), so the
+   * first insert is idempotent now — but the audit row never was, and these
+   * committed separately. A failure between them granted somebody a workspace
+   * with no record of it, which is the one write PRD §8 is least willing to lose.
+   *
+   * src/db/retry.ts names this function as the reason writes are never retried on
+   * a dropped connection. With the unique index and this transaction, that
+   * reasoning is now about the audit row rather than the membership.
+   */
+  await withOrg(org.id, async (tx) => {
+    await tx.insert(member).values({
+      id: randomUUID(),
+      organizationId: org.id,
+      userId: user.id,
+      role: DEFAULT_ROLE,
+      createdAt: new Date(),
+    });
 
-  // PRD §8: audit log on every write. Granting access is a write.
-  await db.insert(activities).values({
-    orgId: org.id,
-    type: "member_added",
-    payloadJson: { email: user.email, role: DEFAULT_ROLE, reason: "allowed email domain" },
-    actorId: user.id,
+    // PRD §8: audit log on every write. Granting access is a write.
+    await tx.insert(activities).values({
+      orgId: org.id,
+      type: "member_added",
+      payloadJson: { email: user.email, role: DEFAULT_ROLE, reason: "allowed email domain" },
+      actorId: user.id,
+    });
   });
 
   return { orgId: org.id, orgName: org.name, role: DEFAULT_ROLE };

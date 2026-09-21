@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 
-import { db, withOrg } from "@/db/client";
+import { db, withOrg, type Db, type Tx } from "@/db/client";
 import { zohoConnections } from "@/db/schema";
 import type { ZohoDc } from "@/domain/zoho/dc";
 import {
@@ -207,8 +207,14 @@ export async function loadRevocationData(
   }
 }
 
-export async function deleteZohoConnection(orgId: string): Promise<boolean> {
-  const rows = await db
+/**
+ * Takes an optional runner so the caller can commit the delete with its audit row.
+ *
+ * `disconnectZoho` has to revoke at Zoho first, and that `fetch` must stay outside
+ * any transaction — so only this delete and the activity insert go inside one.
+ */
+export async function deleteZohoConnection(orgId: string, runner: Db | Tx = db): Promise<boolean> {
+  const rows = await runner
     .delete(zohoConnections)
     .where(eq(zohoConnections.orgId, orgId))
     .returning({ orgId: zohoConnections.orgId });

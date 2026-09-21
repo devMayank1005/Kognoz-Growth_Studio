@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { db } from "@/db/client";
+import { withOrg } from "@/db/client";
 import {
   createConversation,
   deleteConversation,
@@ -93,15 +93,30 @@ export async function remove(
   const session = await requireSession();
   if (!id.safeParse(conversationId).success) return { ok: false, message: "Unknown conversation." };
 
-  const removed = await deleteConversation(session.orgId, session.userId, conversationId);
-  if (!removed) return { ok: false, message: "That conversation is no longer there." };
+  /**
+   * Delete and audit in one transaction.
+   *
+   * `conversation_deleted` exists in the activity enum specifically because
+   * CLAUDE.md records that creating and renaming a conversation are deliberately
+   * NOT audited while destroying one is. Committing the delete separately from its
+   * own audit row meant the one entry the design insists on could be the one lost.
+   *
+   * Returning null from inside the transaction rather than throwing: "already
+   * gone" is a normal answer, not a rollback.
+   */
+  const removed = await withOrg(session.orgId, async (tx) => {
+    const gone = await deleteConversation(session.orgId, session.userId, conversationId, tx);
+    if (!gone) return null;
 
-  await db.insert(activities).values({
-    orgId: session.orgId,
-    type: "conversation_deleted",
-    payloadJson: { title: removed.title, turns: removed.turns.length },
-    actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      type: "conversation_deleted",
+      payloadJson: { title: gone.title, turns: gone.turns.length },
+      actorId: session.userId,
+    });
+    return gone;
   });
+  if (!removed) return { ok: false, message: "That conversation is no longer there." };
 
   revalidatePath("/chat");
   return { ok: true, removed };

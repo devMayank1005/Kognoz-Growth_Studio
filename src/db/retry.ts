@@ -55,6 +55,31 @@ export function isTransientConnectionError(err: unknown, depth = 0): boolean {
   return false;
 }
 
+/**
+ * True when this error is a unique-constraint violation (SQLSTATE 23505).
+ *
+ * Walks the same layers as `isTransientConnectionError` above, for the same
+ * reason: drizzle wraps the driver error in `cause`.
+ *
+ * Used where a unique index is the authority rather than a pre-check — `addCard`
+ * asks the partial index `opportunities_one_live_per_account_uidx` whether a live
+ * card already exists, instead of trusting a SELECT that another request can
+ * invalidate between the read and the write.
+ */
+export function isUniqueViolation(err: unknown, depth = 0): boolean {
+  if (!err || typeof err !== "object" || depth > 5) return false;
+
+  const e = err as { code?: unknown; cause?: unknown; errors?: unknown };
+  if (e.code === "23505") return true;
+
+  if (Array.isArray(e.errors)) {
+    for (const sub of e.errors) if (isUniqueViolation(sub, depth + 1)) return true;
+  }
+
+  if (e.cause && e.cause !== err) return isUniqueViolation(e.cause, depth + 1);
+  return false;
+}
+
 /** Runs `fn`, retrying exactly once if it failed because the connection died. */
 export async function retryOnConnectionError<T>(
   fn: () => Promise<T>,

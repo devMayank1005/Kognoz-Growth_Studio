@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { eq } from "drizzle-orm";
 
-import { db } from "@/db/client";
+import { db, withOrg } from "@/db/client";
 import { activities, settings } from "@/db/schema";
 import { deleteZohoConnection, loadRevocationData } from "@/db/zoho";
 import { canManageIntegrations } from "@/domain/access";
@@ -179,17 +179,29 @@ export async function disconnectZoho(): Promise<
   const data = await loadRevocationData(session.orgId);
   const revoked = data ? await revokeRefreshToken(data.accountsDomain, data.refreshToken) : false;
 
-  // Deleted regardless of whether the revoke succeeded: a Zoho outage must not
-  // block a local disconnect. The operator is told when to remove it by hand.
-  const removed = await deleteZohoConnection(session.orgId);
-  if (!removed) return { ok: false, message: "Zoho was not connected." };
+  /**
+   * Deleted regardless of whether the revoke succeeded: a Zoho outage must not
+   * block a local disconnect. The operator is told when to remove it by hand.
+   *
+   * The delete and its audit row are one transaction; `revokeRefreshToken` above
+   * is deliberately outside it, because it is a network call and CLAUDE.md:300-303
+   * forbids one inside `withOrg`. Losing the audit row here would erase the record
+   * that a client's encrypted refresh token was destroyed — and connect wrote no
+   * audit row at all until this change, so the pair was doubly asymmetric.
+   */
+  const removed = await withOrg(session.orgId, async (tx) => {
+    const gone = await deleteZohoConnection(session.orgId, tx);
+    if (!gone) return false;
 
-  await db.insert(activities).values({
-    orgId: session.orgId,
-    type: "note",
-    payloadJson: { action: "zoho_disconnected", revoked },
-    actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      type: "note",
+      payloadJson: { action: "zoho_disconnected", revoked },
+      actorId: session.userId,
+    });
+    return true;
   });
+  if (!removed) return { ok: false, message: "Zoho was not connected." };
 
   revalidatePath("/settings");
   return { ok: true, revoked };
@@ -222,23 +234,33 @@ export async function setZohoDryRun(
   // enter a client's live CRM.
   if (typeof on !== "boolean") return { ok: false as const, message: "Dry run is either on or off." };
 
-  const updated = await db
-    .update(settings)
-    .set({ zohoDryRun: on })
-    .where(eq(settings.orgId, session.orgId))
-    .returning({ dryRun: settings.zohoDryRun });
+  /**
+   * The flip and its audit row together.
+   *
+   * §8 wants an audit entry on every write, and turning this off is the single most
+   * consequential setting in the product: it is the moment Growth Studio starts
+   * writing into someone else's CRM. That is precisely the entry that must not be
+   * the one lost to a failure between two separate commits.
+   */
+  const updated = await withOrg(session.orgId, async (tx) => {
+    const rows = await tx
+      .update(settings)
+      .set({ zohoDryRun: on })
+      .where(eq(settings.orgId, session.orgId))
+      .returning({ dryRun: settings.zohoDryRun });
 
-  if (updated.length === 0) return { ok: false, message: "No settings row for this organisation." };
+    if (rows.length === 0) return false;
 
-  // §8 wants an audit entry on every write, and turning this off is the single
-  // most consequential setting in the product: it is the moment Growth Studio
-  // starts writing into someone else's CRM.
-  await db.insert(activities).values({
-    orgId: session.orgId,
-    type: "note",
-    payloadJson: { action: "zoho_dry_run_changed", dryRun: on },
-    actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId,
+      type: "note",
+      payloadJson: { action: "zoho_dry_run_changed", dryRun: on },
+      actorId: session.userId,
+    });
+    return true;
   });
+
+  if (!updated) return { ok: false, message: "No settings row for this organisation." };
 
   revalidatePath("/settings");
   // The push chip and the pipeline pills read this to decide what to promise.

@@ -6,7 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { db } from "@/db/client";
+import { db, withOrg } from "@/db/client";
 import { activities, dnc, partnerTowers, settings, user } from "@/db/schema";
 import { rateFromDecimal } from "@/domain/money";
 import { TOWER_KEYS } from "@/domain/practices";
@@ -270,16 +270,19 @@ export async function addToDnc(name: string, reason: string) {
   if (!parsedReason.success) return { ok: false as const, message: "That reason is too long." };
   const clean = parsedName.data;
 
-  await db
-    .insert(dnc)
-    .values({ id: randomUUID(), orgId: session.orgId, name: clean, kind: "company", reason: parsedReason.data || null, addedBy: session.userId })
-    .onConflictDoNothing({ target: [dnc.orgId, dnc.name] });
+  // One transaction: §8 wants an audit entry on every write, and this write
+  // governs who the firm may contact. Committing the two separately meant a
+  // failure between them could add a block with no record of who added it.
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .insert(dnc)
+      .values({ id: randomUUID(), orgId: session.orgId, name: clean, kind: "company", reason: parsedReason.data || null, addedBy: session.userId })
+      .onConflictDoNothing({ target: [dnc.orgId, dnc.name] });
 
-  // §8 wants an audit entry on every write, and this one governs who we may
-  // contact — exactly the kind that should be traceable.
-  await db.insert(activities).values({
-    orgId: session.orgId, type: "note",
-    payloadJson: { action: "dnc_added", name: clean, reason: parsedReason.data }, actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "dnc_added", name: clean, reason: parsedReason.data }, actorId: session.userId,
+    });
   });
 
   revalidatePath("/settings");
@@ -293,11 +296,21 @@ export async function removeFromDnc(name: string) {
   const parsedName = dncNameSchema.safeParse(name);
   if (!parsedName.success) return { ok: false as const, message: "Name required." };
   const clean = parsedName.data;
-  await db.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, clean)));
+  /**
+   * The dangerous direction, and the one that most needed a transaction.
+   *
+   * The delete is not reversible, and losing the audit row destroys the only
+   * record of who un-blocked a company — after which the §8 gate correctly lets
+   * the next add, draft and packet through for a company somebody decided not to
+   * contact.
+   */
+  await withOrg(session.orgId, async (tx) => {
+    await tx.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, clean)));
 
-  await db.insert(activities).values({
-    orgId: session.orgId, type: "note",
-    payloadJson: { action: "dnc_removed", name: clean }, actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "dnc_removed", name: clean }, actorId: session.userId,
+    });
   });
 
   revalidatePath("/settings");

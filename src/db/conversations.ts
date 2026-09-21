@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
-import { db } from "@/db/client";
+import { db, type Db, type Tx } from "@/db/client";
 import { conversations, member } from "@/db/schema";
 import type { EngineChart, EngineRow } from "@/engine/schemas";
 import { titleFromText } from "@/lib/titles";
@@ -129,13 +129,22 @@ export async function renameConversation(
   return rows.length > 0;
 }
 
-/** Returns the deleted row, so the caller can offer Undo (PRD §9.6). */
+/**
+ * Returns the deleted row, so the caller can offer Undo (PRD §9.6).
+ *
+ * Takes an optional runner so the caller can pull the delete into the same
+ * transaction as its audit row. Without it the two committed separately and a
+ * failure between them destroyed a conversation with no record that it had been
+ * destroyed — for the one activity type whose whole purpose is recording that
+ * (`conversation_deleted`).
+ */
 export async function deleteConversation(
   orgId: string,
   userId: string,
   id: string,
+  runner: Db | Tx = db,
 ): Promise<{ title: string; turns: ConversationTurn[] } | null> {
-  const rows = await db
+  const rows = await runner
     .delete(conversations)
     .where(
       and(

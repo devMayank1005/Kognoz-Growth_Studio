@@ -179,18 +179,33 @@ export async function generateDraft(opportunityId: string, kind?: DraftKind): Pr
     usage: result.usage, latencyMs: Date.now() - started,
   });
 
-  const [saved] = await db
-    .insert(drafts)
-    .values({
-      orgId: session.orgId, opportunityId, kind: chosen,
-      subject: result.draft.subject, body: result.draft.body, actorId: session.userId,
-    })
-    .returning({ id: drafts.id });
+  /**
+   * The draft and its audit row together.
+   *
+   * These committed separately, so a failure between them left a draft the
+   * operator could send with no `draft` entry on the timeline — after a model call
+   * that had already been paid for and already logged. The timeline would show the
+   * spend and not the artefact.
+   *
+   * The transaction starts HERE, after `writeDraft` and `logModelCall`, and not a
+   * line earlier: `writeDraft` is a `fetch`, and CLAUDE.md:300-303 forbids one
+   * inside `withOrg` because the pool's idle_in_transaction_session_timeout is 15s.
+   */
+  const saved = await withOrg(session.orgId, async (tx) => {
+    const [row] = await tx
+      .insert(drafts)
+      .values({
+        orgId: session.orgId, opportunityId, kind: chosen,
+        subject: result.draft.subject, body: result.draft.body, actorId: session.userId,
+      })
+      .returning({ id: drafts.id });
 
-  await db.insert(activities).values({
-    orgId: session.orgId, opportunityId, accountId: card.accountId,
-    type: "draft", payloadJson: { kind: chosen, subject: result.draft.subject },
-    actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId, opportunityId, accountId: card.accountId,
+      type: "draft", payloadJson: { kind: chosen, subject: result.draft.subject },
+      actorId: session.userId,
+    });
+    return row;
   });
 
   const [cfg] = await db

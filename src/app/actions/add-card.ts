@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db, withOrg } from "@/db/client";
+import { isUniqueViolation } from "@/db/retry";
 import { accounts, activities, dnc, opportunities, people } from "@/db/schema";
 import { loadPartnerUserIds, loadPartnersByTower } from "@/db/queries";
 import { isDoNotContact } from "@/domain/dnc";
@@ -119,39 +120,33 @@ export async function addCard(
     };
   }
 
-  // -------------------------------------------------------------- account
-  const [account] = await db
-    .insert(accounts)
-    .values({
-      orgId: session.orgId,
-      name: companyName,
-      country: row.country || null,
-      industry: row.industry || industryOf(row.industry),
-      status: "discovered",
-      firstSeen: new Date().toISOString().slice(0, 10),
-    })
-    .onConflictDoUpdate({
-      target: [accounts.orgId, accounts.name],
-      // Do not clobber a curated account's status or segment on re-add.
-      set: { country: sql`coalesce(${accounts.country}, excluded.country)` },
-    })
-    .returning({ id: accounts.id });
-
-  // ------------------------------------------------------------- dedupe
-  // One live card per account (§5). A Won/Lost card does not block a new one.
-  const existing = await db
+  /**
+   * ------------------------------------------------------------- dedupe
+   * One live card per account (§5). A Won/Lost card does not block a new one.
+   *
+   * Checked by account NAME, and before anything is created. It used to run after
+   * the account upsert, which meant a rejected duplicate still left a fresh
+   * `discovered` account behind with no card, no signal and no audit row —
+   * visible on /accounts forever. `drizzle/0014` exists because of one of those.
+   *
+   * This SELECT is the friendly answer, not the guard. The guard is the partial
+   * unique index `0016` added, enforced below: two concurrent adds both pass this
+   * check, and the index is what refuses the second.
+   */
+  const live = await db
     .select({ id: opportunities.id })
     .from(opportunities)
+    .innerJoin(accounts, eq(accounts.id, opportunities.accountId))
     .where(
       and(
         eq(opportunities.orgId, session.orgId),
-        eq(opportunities.accountId, account.id),
+        eq(accounts.name, companyName),
         inArray(opportunities.stage, [...LIVE_STAGES]),
       ),
     )
     .limit(1);
 
-  if (existing.length > 0) {
+  if (live.length > 0) {
     return {
       ok: false,
       reason: "duplicate",
@@ -170,22 +165,49 @@ export async function addCard(
     stage: parsedOptions.data?.stage ?? "Prospect",
   });
 
-  // A named contact is only linked when we actually hold that person as a
-  // verified record. Otherwise the target ROLE is stored — never a free-text
-  // name pretending to be verified (§9.5).
-  let contactPersonId: string | null = null;
-  if (row.contact_name) {
-    const [match] = await db
-      .select({ id: people.id })
-      .from(people)
-      .where(and(eq(people.accountId, account.id), eq(people.name, row.contact_name)))
-      .limit(1);
-    contactPersonId = match?.id ?? null;
-  }
-
   const practiceId = practiceByName(card.practice)?.id ?? "org";
 
-  const inserted = await withOrg(session.orgId, async (tx) => {
+  /**
+   * The account, the card and the audit row in ONE transaction.
+   *
+   * The account upsert used to commit on its own, before the card was even
+   * attempted. Now a failure anywhere below — including the unique index refusing
+   * a concurrent second live card — takes the account with it, so a rejected add
+   * leaves the database exactly as it found it.
+   */
+  let inserted: { id: string };
+  try {
+    inserted = await withOrg(session.orgId, async (tx) => {
+    const [account] = await tx
+      .insert(accounts)
+      .values({
+        orgId: session.orgId,
+        name: companyName,
+        country: row.country || null,
+        industry: row.industry || industryOf(row.industry),
+        status: "discovered",
+        firstSeen: new Date().toISOString().slice(0, 10),
+      })
+      .onConflictDoUpdate({
+        target: [accounts.orgId, accounts.name],
+        // Do not clobber a curated account's status or segment on re-add.
+        set: { country: sql`coalesce(${accounts.country}, excluded.country)` },
+      })
+      .returning({ id: accounts.id });
+
+    // A named contact is only linked when we actually hold that person as a
+    // verified record. Otherwise the target ROLE is stored — never a free-text
+    // name pretending to be verified (§9.5).
+    let contactPersonId: string | null = null;
+    if (row.contact_name) {
+      const [match] = await tx
+        .select({ id: people.id })
+        .from(people)
+        .where(and(eq(people.accountId, account.id), eq(people.name, row.contact_name)))
+        .limit(1);
+      contactPersonId = match?.id ?? null;
+    }
+
     const [opp] = await tx
       .insert(opportunities)
       .values({
@@ -226,7 +248,25 @@ export async function addCard(
     });
 
     return opp;
-  });
+    });
+  } catch (err) {
+    /**
+     * The index had the last word.
+     *
+     * Two concurrent adds both pass the SELECT above and both reach here; the
+     * partial unique index refuses the second. Reporting that as "already live"
+     * rather than letting a 500 escape is the whole point of catching it — and the
+     * transaction has already taken the account upsert back out with it.
+     */
+    if (isUniqueViolation(err)) {
+      return {
+        ok: false,
+        reason: "duplicate",
+        message: `${companyName} is already live in the pipeline.`,
+      };
+    }
+    throw err;
+  }
 
   // Adding a card is the product's primary action, and until now it invalidated
   // nothing: the top bar, Pipeline, Today and Dashboard kept serving whatever
