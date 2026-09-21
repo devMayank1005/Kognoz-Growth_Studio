@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
+import { cache } from "react";
 
-import { db, withOrg } from "@/db/client";
-import { zohoConnections } from "@/db/schema";
+import { db, withOrg, type Db, type Tx } from "@/db/client";
+import { activities, zohoConnections } from "@/db/schema";
 import type { ZohoDc } from "@/domain/zoho/dc";
 import {
   accessTokenAad, cryptoConfigError, currentKeyId, decryptSecret,
@@ -59,8 +60,17 @@ export type ZohoStatus =
  * "not connected" would send the operator to reconnect — which burns one of
  * Zoho's 20 refresh tokens per user and does not address the actual cause,
  * a mismatched `ZOHO_TOKEN_KEY`.
+ *
+ * `cache()` for the same reason `loadPipeline` and `loadMoneyView` have it, and it
+ * was the one loader in the studio layout without it: the layout reads it and then
+ * /pipeline and /settings each read it again, so those routes paid two round trips
+ * for one answer. At ~240ms each that is a wasted connection out of a pool of ten,
+ * and src/db/client.ts records that four simultaneous cold connections already
+ * produced 500s.
+ *
+ * Note this also decrypts, so deduplicating the call deduplicates that too.
  */
-export async function loadZohoStatus(orgId: string): Promise<ZohoStatus> {
+export const loadZohoStatus = cache(async function loadZohoStatus(orgId: string): Promise<ZohoStatus> {
   const [row] = await db
     .select({
       dc: zohoConnections.dc,
@@ -115,7 +125,7 @@ export async function loadZohoStatus(orgId: string): Promise<ZohoStatus> {
     lastRefreshAt: row.lastRefreshAt,
     lastError: row.lastError,
   };
-}
+});
 
 function canDecrypt(envelope: string, orgId: string): boolean {
   try {
@@ -178,6 +188,29 @@ export async function saveZohoConnection(input: ZohoConnectionInput): Promise<vo
           updatedAt: new Date(),
         },
       });
+
+    /**
+     * Connecting is audited too.
+     *
+     * `disconnectZoho` has always written a `zoho_disconnected` entry and connect
+     * wrote nothing, so the audit trail recorded the end of a CRM connection and
+     * never the start of one. It goes inside this transaction rather than in the
+     * callback route so it cannot be skipped by a caller.
+     *
+     * No token material, no scope string: §8 applies to diagnostics, and the
+     * connection row itself already holds what is needed.
+     */
+    await tx.insert(activities).values({
+      orgId: input.orgId,
+      type: "note",
+      payloadJson: {
+        action: "zoho_connected",
+        dc: input.dc,
+        zohoOrgName: input.zohoOrgName ?? null,
+        currency: input.zohoCurrency ?? null,
+      },
+      actorId: input.connectedByUserId ?? null,
+    });
   });
 }
 
@@ -207,8 +240,14 @@ export async function loadRevocationData(
   }
 }
 
-export async function deleteZohoConnection(orgId: string): Promise<boolean> {
-  const rows = await db
+/**
+ * Takes an optional runner so the caller can commit the delete with its audit row.
+ *
+ * `disconnectZoho` has to revoke at Zoho first, and that `fetch` must stay outside
+ * any transaction — so only this delete and the activity insert go inside one.
+ */
+export async function deleteZohoConnection(orgId: string, runner: Db | Tx = db): Promise<boolean> {
+  const rows = await runner
     .delete(zohoConnections)
     .where(eq(zohoConnections.orgId, orgId))
     .returning({ orgId: zohoConnections.orgId });

@@ -136,45 +136,63 @@ export interface PipelineCardRow {
   contactRole: string;
 }
 
-// Deduped per request: the studio layout and /today, /pipeline and /dashboard
-// each load it, which meant the same full scan two or three times per view.
-export const loadPipeline = cache(async function loadPipeline(orgId: string): Promise<PipelineCardRow[]> {
-  const rows = await db
-    .select({
-      id: opportunities.id,
-      account: accounts.name,
-      practiceId: opportunities.practiceId,
-      tower: opportunities.tower,
-      stage: opportunities.stage,
-      value: opportunities.value,
-      tier: opportunities.tier,
-      partnerName: user.name,
-      contactRole: opportunities.contactRole,
-      contactName: people.name,
-      contactTitle: people.role,
-      next: opportunities.nextStep,
-      due: opportunities.dueOn,
-      touches: opportunities.touches,
-      country: accounts.country,
-      industry: accounts.industry,
-      evidence: opportunities.evidence,
-      url: opportunities.url,
-      signal: opportunities.signalCode,
-      dispatchedAt: opportunities.dispatchedAt,
-      zohoSyncedAt: opportunities.zohoSyncedAt,
-      zohoSyncError: opportunities.zohoSyncError,
-      zohoBlockedAt: opportunities.zohoBlockedAt,
-      createdAt: opportunities.createdAt,
-      updatedAt: opportunities.updatedAt,
-    })
+/**
+ * The columns and the mapping, declared once.
+ *
+ * `loadCardForPush` below needs the identical shape for a single card, and
+ * duplicating a 23-column select plus its mapper is exactly how two readers of the
+ * same table drift apart. The push variant spreads these and adds the two Zoho id
+ * columns it needs, so the hot path does not carry them.
+ */
+const CARD_COLUMNS = {
+  id: opportunities.id,
+  account: accounts.name,
+  practiceId: opportunities.practiceId,
+  tower: opportunities.tower,
+  stage: opportunities.stage,
+  value: opportunities.value,
+  tier: opportunities.tier,
+  partnerName: user.name,
+  contactRole: opportunities.contactRole,
+  contactName: people.name,
+  contactTitle: people.role,
+  next: opportunities.nextStep,
+  due: opportunities.dueOn,
+  touches: opportunities.touches,
+  country: accounts.country,
+  industry: accounts.industry,
+  evidence: opportunities.evidence,
+  url: opportunities.url,
+  signal: opportunities.signalCode,
+  dispatchedAt: opportunities.dispatchedAt,
+  zohoSyncedAt: opportunities.zohoSyncedAt,
+  zohoSyncError: opportunities.zohoSyncError,
+  zohoBlockedAt: opportunities.zohoBlockedAt,
+  createdAt: opportunities.createdAt,
+  updatedAt: opportunities.updatedAt,
+} as const;
+
+/**
+ * The joins, declared once too — and the row type inferred from them rather than
+ * written out.
+ *
+ * Hand-deriving the type from `CARD_COLUMNS` loses what the LEFT joins add: the
+ * partner and the contact are nullable in the result and not in the column
+ * definition, which a mapped type over the columns cannot know.
+ */
+function cardQuery() {
+  return db
+    .select(CARD_COLUMNS)
     .from(opportunities)
     .innerJoin(accounts, eq(opportunities.accountId, accounts.id))
     .leftJoin(user, eq(opportunities.partnerUserId, user.id))
-    .leftJoin(people, eq(opportunities.contactPersonId, people.id))
-    .where(eq(opportunities.orgId, orgId))
-    .orderBy(desc(opportunities.createdAt));
+    .leftJoin(people, eq(opportunities.contactPersonId, people.id));
+}
 
-  return rows.map((r) => ({
+type CardRow = Awaited<ReturnType<ReturnType<typeof cardQuery>["execute"]>>[number];
+
+function toCard(r: CardRow): PipelineCardRow {
+  return {
     id: r.id,
     account: r.account,
     practiceId: r.practiceId,
@@ -203,8 +221,61 @@ export const loadPipeline = cache(async function loadPipeline(orgId: string): Pr
     contactName: r.contactName ?? "",
     contactTitle: r.contactTitle ?? "",
     contactRole: r.contactRole ?? "",
-  }));
+  };
+}
+
+// Deduped per request: the studio layout and /today, /pipeline and /dashboard
+// each load it, which meant the same full scan two or three times per view.
+export const loadPipeline = cache(async function loadPipeline(orgId: string): Promise<PipelineCardRow[]> {
+  const rows = await cardQuery()
+    .where(eq(opportunities.orgId, orgId))
+    .orderBy(desc(opportunities.createdAt));
+
+  return rows.map(toCard);
 });
+
+/** Everything `pushCard` needs about one card, in one query. */
+export interface PushCardRow {
+  card: PipelineCardRow;
+  leadId: string | null;
+  dealId: string | null;
+  /** A Date, not the card's ISO string: it is half of `pushAttemptKey`. */
+  updatedAt: Date;
+}
+
+/**
+ * One card, for the Zoho push path.
+ *
+ * `pushCard` used to do `(await loadPipeline(orgId)).find(c => c.id === id)` two
+ * lines below its own single-row select of the same table. Its comment said
+ * `loadPipeline` is "cached per request" — true, and irrelevant here: Inngest runs
+ * ONE HTTP invocation per `step.run`, so every step is a fresh request scope and a
+ * fresh full scan. A "Push now" over N pending cards therefore ran N+1 unbounded
+ * four-table scans to read N rows, serially, on a ~240ms round trip.
+ *
+ * Two queries become one. `updatedAt` is read here rather than from the cached
+ * pipeline because it is half the idempotency key and must be the fresh value.
+ */
+export async function loadCardForPush(
+  orgId: string,
+  opportunityId: string,
+): Promise<PushCardRow | null> {
+  const [row] = await db
+    .select({
+      ...CARD_COLUMNS,
+      leadId: opportunities.zohoLeadId,
+      dealId: opportunities.zohoDealId,
+    })
+    .from(opportunities)
+    .innerJoin(accounts, eq(opportunities.accountId, accounts.id))
+    .leftJoin(user, eq(opportunities.partnerUserId, user.id))
+    .leftJoin(people, eq(opportunities.contactPersonId, people.id))
+    .where(and(eq(opportunities.orgId, orgId), eq(opportunities.id, opportunityId)))
+    .limit(1);
+
+  if (!row) return null;
+  return { card: toCard(row), leadId: row.leadId, dealId: row.dealId, updatedAt: row.updatedAt };
+}
 
 /** Tower → partner name, for routing and for the live-state block. */
 export async function loadPartnersByTower(orgId: string): Promise<Record<TowerKey, string>> {

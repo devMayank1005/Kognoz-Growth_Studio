@@ -137,7 +137,15 @@ region-move plan: `docs/CLAIM-NEON.md`.
 *failed run*; conflating them kept the status strip red all day after one transient 05:36
 failure) · `0009` `zoho_dry_run` · `0010` the four `opportunities.zoho_*` sync-state columns ·
 `0011`/`0012` the re-denomination · `0013` the `activity_log` view · `0014` a one-off account
-merge. `0013`+ are hand-written; `drizzle-kit generate --custom` writes the journal entry.
+merge · `0015` CHECK constraints for every text-enum column · `0016` the three unique indexes the
+select-then-insert paths assumed they had, plus the de-duplication they needed first · `0017`
+`zoho_push_attempts`, the intent log that stops a retry creating a second Lead · `0018` RLS policies
+and the `growth_app` role (created and tested, **not** enforcing — see `src/db/client.ts`) · `0019`
+numeric range constraints, written as `BETWEEN` because `enum-checks.test.ts` parses the `IN` form ·
+`0020` `activities` foreign keys to `SET NULL` so the audit trail outlives what it describes ·
+`0021` `created_at` on `signals` and `people`, backfilled in three steps so the history survives ·
+`0022` `activities(account_id, at desc)`.
+`0013`+ are hand-written; `drizzle-kit generate --custom` writes the journal entry.
 
 **`activity_log` is a view for reading the audit trail in the Neon console**, not for the app —
 nothing in `src/` queries it. It resolves `actor_id` to a name and unwraps
@@ -277,7 +285,19 @@ includes views.
   source only. No email, phone, address, or personal social columns — not in the schema, not in a
   form, not in a prompt, not searched for. Company-published generic mailboxes only; never guessed.
 - **DNC blocks add, draft, and packet** — every path, enforced in the domain layer.
-- Every mutation writes an audit entry.
+- **Most mutations write an audit entry, and the ones that do write it in the same transaction.**
+  Not "every" — that was claimed here and was not true. What is audited: every card write
+  (`card-actions.ts`), every add, the DNC list both directions, membership provisioning, the Zoho
+  connect **and** disconnect, the dry-run switch, a manual FX rate and clearing its override, and a
+  card being quarantined from the CRM. Each of those now commits with its write rather than after it,
+  so a failure between the two cannot leave the write without its record.
+  Still **unaudited**, deliberately or not yet: `renamePartner`, `saveOrgSettings`,
+  `saveDisplayCurrency`, `saveZohoBcc`, the nightly `refreshFxRate`, and `persistSweep`'s accounts and
+  signals. Conversation create/rename/restore are unaudited **on purpose** — see the note further
+  down; only deletion is recorded.
+  A card quarantine is audited when it *happens*, not on every failed attempt: `zohoSyncAll` pushes
+  serially and Inngest retries three times, so a Zoho outage would otherwise write a row per card per
+  attempt and bury the entries that matter.
 - **Org isolation is enforced in the repository layer, and now has a policy underneath it that is
   not yet switched on.** Every query filters on the session's `orgId`. `drizzle/0018` creates RLS
   policies on all **15** org-scoped tables (the count was recorded here as 13 and was wrong — count

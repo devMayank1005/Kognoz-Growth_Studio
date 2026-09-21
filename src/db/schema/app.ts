@@ -21,7 +21,7 @@
  * practice id as text.
  */
 
-import { relations, sql } from "drizzle-orm";
+import { desc, relations, sql } from "drizzle-orm";
 import {
   boolean,
   date,
@@ -46,7 +46,7 @@ export const settings = pgTable("settings", {
   zohoOrgId: text("zoho_org_id"),
   icpText: text("icp_text").notNull(),
   radarMarkets: text("radar_markets").array().notNull().default([]),
-  /** Target share of new-logo work, 0-1. PRD §0 locks this at 0.70. */
+  /** Target share of new-logo work as a PERCENTAGE — 70, not 0.70. PRD §0 locks it at 70%. */
   mixNewRatio: integer("mix_new_ratio").notNull().default(70),
   zohoBcc: text("zoho_bcc"),
   doctrineJson: jsonb("doctrine_json").$type<Record<string, unknown>>(),
@@ -233,6 +233,12 @@ export const people = pgTable(
     /** Public URL the name and title were read from. */
     source: text("source").notNull(),
     verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    /**
+     * When the record was stored. `verifiedAt` is nullable and means something
+     * else — when a human confirmed the person is real — so it could not answer
+     * "when did this name enter the database", which is the §8 question.
+     */
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     zohoContactId: text("zoho_contact_id"),
   },
   (t) => [index("people_account_idx").on(t.accountId)],
@@ -255,6 +261,17 @@ export const signals = pgTable(
     date: date("date").notNull(),
     confidence: integer("confidence"),
     sweepId: uuid("sweep_id").references(() => sweepRuns.id, { onDelete: "set null" }),
+    /**
+     * When the finding was STORED, as distinct from `date`, which is when the
+     * news happened.
+     *
+     * There was no such column, and `drizzle/0016` had to work around its absence
+     * to de-duplicate: it ordered on `sweep_runs.started_at` because ids here are
+     * `gen_random_uuid()` and so carry no time at all. Anything asking "what did
+     * the radar find this week" had only the news date to go on, which is not the
+     * same question.
+     */
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
   },
   (t) => [
@@ -462,8 +479,23 @@ export const activities = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: text("org_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
-    opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "cascade" }),
-    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+    /**
+     * SET NULL, not cascade. PRD §8 requires the audit trail to survive the row
+     * it describes.
+     *
+     * Both were `cascade`, so deleting an account or a card silently deleted the
+     * entries recording what had been done to it. `drizzle/0014` had to repoint
+     * four audit rows by hand before deleting an account for exactly this reason,
+     * and its comment says so.
+     *
+     * A nulled row surviving is only useful if it still says WHAT it was about, and
+     * no payload writer carried the company name — so every writer now puts
+     * `account` in `payload_json`. Without that, SET NULL would have turned
+     * "audit row deleted" into "audit row that says nothing", which is worse for
+     * being harder to notice.
+     */
+    opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "set null" }),
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "set null" }),
     type: text("type", { enum: activityTypes }).notNull(),
     payloadJson: jsonb("payload_json").$type<Record<string, unknown>>(),
     actorId: text("actor_id").references(() => user.id, { onDelete: "set null" }),
@@ -472,6 +504,25 @@ export const activities = pgTable(
   (t) => [
     index("activities_opportunity_idx").on(t.opportunityId),
     index("activities_org_at_idx").on(t.orgId, t.at),
+    /**
+     * The one index the audit found worth adding now.
+     *
+     * `account_id` is a foreign key and Postgres does not index those. The account
+     * dossier filters and sorts on exactly this pair (`loadAccountDossier` in
+     * src/db/queries.ts), and the planner's only alternative was to walk the org's
+     * entire activity history in `at` order and discard most of it — on the
+     * fastest-growing table in the app, a row per add, draft, send, packet,
+     * outcome, value change and push.
+     *
+     * It also serves the delete: `activities.account_id` is ON DELETE SET NULL as
+     * of 0020, so every account delete previously seq-scanned this table.
+     *
+     * The rest of the missing-index list is deliberately NOT here. At 174 accounts
+     * Postgres reads those tables faster than an index, and paying write cost for
+     * a read that is already instant is the wrong trade. This one is on the table
+     * that actually grows without bound.
+     */
+    index("activities_account_at_idx").on(t.accountId, desc(t.at)),
   ],
 );
 

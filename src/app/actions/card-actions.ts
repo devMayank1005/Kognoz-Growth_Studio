@@ -179,18 +179,33 @@ export async function generateDraft(opportunityId: string, kind?: DraftKind): Pr
     usage: result.usage, latencyMs: Date.now() - started,
   });
 
-  const [saved] = await db
-    .insert(drafts)
-    .values({
-      orgId: session.orgId, opportunityId, kind: chosen,
-      subject: result.draft.subject, body: result.draft.body, actorId: session.userId,
-    })
-    .returning({ id: drafts.id });
+  /**
+   * The draft and its audit row together.
+   *
+   * These committed separately, so a failure between them left a draft the
+   * operator could send with no `draft` entry on the timeline — after a model call
+   * that had already been paid for and already logged. The timeline would show the
+   * spend and not the artefact.
+   *
+   * The transaction starts HERE, after `writeDraft` and `logModelCall`, and not a
+   * line earlier: `writeDraft` is a `fetch`, and CLAUDE.md:300-303 forbids one
+   * inside `withOrg` because the pool's idle_in_transaction_session_timeout is 15s.
+   */
+  const saved = await withOrg(session.orgId, async (tx) => {
+    const [row] = await tx
+      .insert(drafts)
+      .values({
+        orgId: session.orgId, opportunityId, kind: chosen,
+        subject: result.draft.subject, body: result.draft.body, actorId: session.userId,
+      })
+      .returning({ id: drafts.id });
 
-  await db.insert(activities).values({
-    orgId: session.orgId, opportunityId, accountId: card.accountId,
-    type: "draft", payloadJson: { kind: chosen, subject: result.draft.subject },
-    actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId, opportunityId, accountId: card.accountId,
+      type: "draft", payloadJson: { account: card.account, kind: chosen, subject: result.draft.subject },
+      actorId: session.userId,
+    });
+    return row;
   });
 
   const [cfg] = await db
@@ -266,7 +281,7 @@ export async function markDraftSent(
     await tx.insert(activities).values({
       orgId: session.orgId, opportunityId, accountId: card.accountId,
       type: "sent",
-      payloadJson: { kind, touches: result.touches, rotateOrPark: result.rotateOrPark },
+      payloadJson: { account: card.account, kind, touches: result.touches, rotateOrPark: result.rotateOrPark },
       actorId: session.userId,
     });
   });
@@ -339,7 +354,7 @@ export async function dispatchPacket(opportunityId: string): Promise<PacketResul
 
     await tx.insert(activities).values({
       orgId: session.orgId, opportunityId, accountId: card.accountId,
-      type: "packet", payloadJson: { partner: card.partner }, actorId: session.userId,
+      type: "packet", payloadJson: { account: card.account, partner: card.partner }, actorId: session.userId,
     });
   });
 
@@ -382,7 +397,7 @@ export async function recordOutcome(
     await tx.insert(activities).values({
       orgId: session.orgId, opportunityId, accountId: card.accountId,
       type: outcome === "won" ? "won" : outcome === "dead" ? "lost" : outcome === "park" ? "park" : outcome === "meeting" ? "meeting" : "replied",
-      payloadJson: { outcome }, actorId: session.userId,
+      payloadJson: { account: card.account, outcome }, actorId: session.userId,
     });
   });
 
@@ -438,7 +453,7 @@ export async function moveToStage(
       opportunityId,
       accountId: card.accountId,
       type: stage === "Won" ? "won" : stage === "Lost" ? "lost" : "note",
-      payloadJson: { action: "stage_moved", from: card.stage, to: stage, via: "kanban" },
+      payloadJson: { account: card.account, action: "stage_moved", from: card.stage, to: stage, via: "kanban" },
       actorId: session.userId,
     });
   });
@@ -528,7 +543,7 @@ export async function setCardValue(
       opportunityId,
       accountId: card.accountId,
       type: crossedToCore ? "wedge_to_core" : "value_changed",
-      payloadJson: { from: card.value, to: rounded, tier, whale },
+      payloadJson: { account: card.account, from: card.value, to: rounded, tier, whale },
       actorId: session.userId,
     });
   });
@@ -564,9 +579,12 @@ export async function dismissSignal(
   const parsedReason = reasonSchema.safeParse(reason);
   if (!parsedReason.success) return badRequest("That reason is too long.");
 
+  // Joined for the account NAME, so the audit row still identifies the company
+  // after `activities.account_id` has been nulled by a delete.
   const [signal] = await db
-    .select({ id: signals.id, accountId: signals.accountId, code: signals.code })
+    .select({ id: signals.id, accountId: signals.accountId, code: signals.code, account: accounts.name })
     .from(signals)
+    .innerJoin(accounts, eq(accounts.id, signals.accountId))
     .where(and(eq(signals.id, signalId), eq(signals.orgId, session.orgId)))
     .limit(1);
   if (!signal) return { ok: false, message: "Signal not found." };
@@ -581,7 +599,7 @@ export async function dismissSignal(
       orgId: session.orgId,
       accountId: signal.accountId,
       type: "signal_dismissed",
-      payloadJson: { signalId, code: signal.code, reason: parsedReason.data ?? "" },
+      payloadJson: { account: signal.account, signalId, code: signal.code, reason: parsedReason.data ?? "" },
       actorId: session.userId,
     });
   });

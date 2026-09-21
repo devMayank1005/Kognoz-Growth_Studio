@@ -46,6 +46,27 @@ export function classifyZohoError(error: ZohoErrorShape): ZohoFailure {
   return "unknown";
 }
 
+/**
+ * Does this failure spend one of a card's five strikes?
+ *
+ * The rule is written into `ZohoFailure` above — *"throttled: Back off; do not
+ * count it toward disabling a connection"* — and `src/lib/zoho/token.ts:178-180`
+ * has always obeyed it for `zoho_connections.refresh_failures`. The counter on
+ * `opportunities.zoho_sync_attempts` never did, so a 429 marched healthy cards
+ * toward quarantine: Inngest retries three times, so one throttled push could
+ * take four strikes, and nothing clears `zoho_blocked_at` except a successful
+ * push the card is by then excluded from attempting.
+ *
+ * `transient` is included for the same reason the token path includes it — "a
+ * network blip or a 429" is not evidence about the payload.
+ *
+ * `data` never reaches this decision: `pushCard` blocks a data refusal outright
+ * rather than counting it, because it will not succeed on a retry.
+ */
+export function spendsStrike(kind: ZohoFailure): boolean {
+  return kind !== "throttled" && kind !== "transient";
+}
+
 /** A sentence the operator can act on. Never echoes a record — PRD §8. */
 export function describeZohoError(error: ZohoErrorShape): string {
   switch (classifyZohoError(error)) {

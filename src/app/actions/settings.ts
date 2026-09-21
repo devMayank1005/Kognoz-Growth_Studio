@@ -6,7 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { db } from "@/db/client";
+import { db, withOrg } from "@/db/client";
 import { activities, dnc, partnerTowers, settings, user } from "@/db/schema";
 import { rateFromDecimal } from "@/domain/money";
 import { TOWER_KEYS } from "@/domain/practices";
@@ -155,15 +155,32 @@ export async function saveFxRate(input: unknown) {
     return { ok: false as const, message: parsed.error.issues[0]?.message ?? "Not a valid rate." };
   }
 
-  await db
-    .update(settings)
-    .set({
-      fxUsdInr: rateFromDecimal(parsed.data),
-      fxUpdatedAt: new Date(),
-      fxSource: "manual",
-      fxManualOverride: true,
-    })
-    .where(eq(settings.orgId, session.orgId));
+  /**
+   * Audited, because this number prices every deal that reaches the CRM.
+   *
+   * It had no audit row at all. A rate typed here converts every Zoho Amount, and
+   * setting one also silences the nightly fetch via `fxManualOverride` — so a
+   * wrong figure persists until somebody notices, with nothing recording who set
+   * it or when. `type: 'note'` with `payload_json.action` is the convention the
+   * activity view already unwraps; the enum has no member for a settings change.
+   */
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(settings)
+      .set({
+        fxUsdInr: rateFromDecimal(parsed.data),
+        fxUpdatedAt: new Date(),
+        fxSource: "manual",
+        fxManualOverride: true,
+      })
+      .where(eq(settings.orgId, session.orgId));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "fx_rate_set", rate: parsed.data, source: "manual" },
+      actorId: session.userId,
+    });
+  });
 
   revalidatePath("/settings");
   return { ok: true as const };
@@ -205,10 +222,19 @@ export async function clearFxOverride() {
   const session = await requireSession();
   const denied = permissionError(session, "manageSettings");
   if (denied) return denied;
-  await db
-    .update(settings)
-    .set({ fxManualOverride: false })
-    .where(eq(settings.orgId, session.orgId));
+  // Also audited: handing the rate back to the nightly fetch changes which
+  // number prices the pipeline tomorrow.
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .update(settings)
+      .set({ fxManualOverride: false })
+      .where(eq(settings.orgId, session.orgId));
+
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "fx_override_cleared" }, actorId: session.userId,
+    });
+  });
   revalidatePath("/settings");
   return { ok: true as const };
 }
@@ -270,16 +296,19 @@ export async function addToDnc(name: string, reason: string) {
   if (!parsedReason.success) return { ok: false as const, message: "That reason is too long." };
   const clean = parsedName.data;
 
-  await db
-    .insert(dnc)
-    .values({ id: randomUUID(), orgId: session.orgId, name: clean, kind: "company", reason: parsedReason.data || null, addedBy: session.userId })
-    .onConflictDoNothing({ target: [dnc.orgId, dnc.name] });
+  // One transaction: §8 wants an audit entry on every write, and this write
+  // governs who the firm may contact. Committing the two separately meant a
+  // failure between them could add a block with no record of who added it.
+  await withOrg(session.orgId, async (tx) => {
+    await tx
+      .insert(dnc)
+      .values({ id: randomUUID(), orgId: session.orgId, name: clean, kind: "company", reason: parsedReason.data || null, addedBy: session.userId })
+      .onConflictDoNothing({ target: [dnc.orgId, dnc.name] });
 
-  // §8 wants an audit entry on every write, and this one governs who we may
-  // contact — exactly the kind that should be traceable.
-  await db.insert(activities).values({
-    orgId: session.orgId, type: "note",
-    payloadJson: { action: "dnc_added", name: clean, reason: parsedReason.data }, actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "dnc_added", name: clean, reason: parsedReason.data }, actorId: session.userId,
+    });
   });
 
   revalidatePath("/settings");
@@ -293,11 +322,21 @@ export async function removeFromDnc(name: string) {
   const parsedName = dncNameSchema.safeParse(name);
   if (!parsedName.success) return { ok: false as const, message: "Name required." };
   const clean = parsedName.data;
-  await db.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, clean)));
+  /**
+   * The dangerous direction, and the one that most needed a transaction.
+   *
+   * The delete is not reversible, and losing the audit row destroys the only
+   * record of who un-blocked a company — after which the §8 gate correctly lets
+   * the next add, draft and packet through for a company somebody decided not to
+   * contact.
+   */
+  await withOrg(session.orgId, async (tx) => {
+    await tx.delete(dnc).where(and(eq(dnc.orgId, session.orgId), eq(dnc.name, clean)));
 
-  await db.insert(activities).values({
-    orgId: session.orgId, type: "note",
-    payloadJson: { action: "dnc_removed", name: clean }, actorId: session.userId,
+    await tx.insert(activities).values({
+      orgId: session.orgId, type: "note",
+      payloadJson: { action: "dnc_removed", name: clean }, actorId: session.userId,
+    });
   });
 
   revalidatePath("/settings");
