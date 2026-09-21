@@ -115,6 +115,16 @@ export const db = drizzle({ client: pool, schema });
 export type Db = typeof db;
 
 /**
+ * The transaction handle `withOrg` hands to its callback.
+ *
+ * Named because several data-layer functions now accept `Db | Tx` so a caller can
+ * pull them into an existing transaction — `deleteZohoConnection` and
+ * `deleteConversation` both needed it once their audit row had to commit with
+ * them.
+ */
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
  * Run work inside a transaction with the org identity pinned in `app.org_id`.
  *
  * NOTE: no Postgres policy reads that GUC today — RLS is not enabled on any
@@ -129,7 +139,7 @@ export type Db = typeof db;
  * nothing to fail closed against — a forgotten `where orgId = …` would simply
  * return another org's rows. The explicit filter is the isolation.
  */
-export async function withOrg<T>(orgId: string, fn: (tx: Parameters<Parameters<Db["transaction"]>[0]>[0]) => Promise<T>): Promise<T> {
+export async function withOrg<T>(orgId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
     return fn(tx);
