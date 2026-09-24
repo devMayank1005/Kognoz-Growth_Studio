@@ -101,6 +101,40 @@ export async function saveOrgSettings(input: unknown) {
   return { ok: true as const };
 }
 
+/**
+ * Pause or resume the 05:30 scheduled sweep for this org.
+ *
+ * Gates the cron only — a manual run still sweeps. Audited because it decides
+ * whether the product spends model calls every morning without anyone asking.
+ */
+export async function setDailySweepEnabled(
+  on: boolean,
+): Promise<{ ok: true; enabled: boolean } | { ok: false; message: string }> {
+  const session = await requireSession();
+  const denied = permissionError(session, "manageSettings");
+  if (denied) return denied;
+  // A server action is a public endpoint; the signature is not a runtime check.
+  if (typeof on !== "boolean") return { ok: false, message: "The daily sweep is either on or off." };
+
+  const updated = await db
+    .update(settings)
+    .set({ dailySweepEnabled: on })
+    .where(eq(settings.orgId, session.orgId))
+    .returning({ enabled: settings.dailySweepEnabled });
+
+  if (updated.length === 0) return { ok: false, message: "No settings row for this organisation." };
+
+  await db.insert(activities).values({
+    orgId: session.orgId,
+    type: "note",
+    payloadJson: { action: "daily_sweep_changed", enabled: on },
+    actorId: session.userId,
+  });
+
+  revalidatePath("/settings");
+  return { ok: true, enabled: on };
+}
+
 /* ---------------------------------------------------------- currency (§5) */
 
 /**

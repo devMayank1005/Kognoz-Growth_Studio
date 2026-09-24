@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { addToDnc, removeFromDnc, renamePartner, saveOrgSettings } from "@/app/actions/settings";
+import { addToDnc, removeFromDnc, renamePartner, saveOrgSettings, setDailySweepEnabled } from "@/app/actions/settings";
 import { ThemeToggle } from "./theme-toggle";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import type { StudioUser } from "@/components/studio/user-menu";
@@ -15,13 +15,14 @@ interface TowerRow {
 }
 
 export function SettingsForm({
-  towers, icpText, radarMarkets, dailyCallBudget, dnc, user, zoho, currency,
+  towers, icpText, radarMarkets, dailyCallBudget, dailySweepEnabled, dnc, user, zoho, currency,
   canManageSettings, canManageCompliance,
 }: {
   towers: TowerRow[];
   icpText: string;
   radarMarkets: string[];
   dailyCallBudget: number;
+  dailySweepEnabled: boolean;
   dnc: string[];
   user: StudioUser;
   /** Rendered by the page, which is where the connection is loaded. */
@@ -40,7 +41,7 @@ export function SettingsForm({
   return (
     <div className="mt-8 space-y-10">
       <Partners towers={towers} canManage={canManageSettings} />
-      <OrgSettings icpText={icpText} radarMarkets={radarMarkets} dailyCallBudget={dailyCallBudget} canManage={canManageSettings} />
+      <OrgSettings icpText={icpText} radarMarkets={radarMarkets} dailyCallBudget={dailyCallBudget} dailySweepEnabled={dailySweepEnabled} canManage={canManageSettings} />
       <DncList names={dnc} canManage={canManageCompliance} />
       {currency}
       <Appearance />
@@ -87,7 +88,7 @@ function Partners({ towers, canManage }: { towers: TowerRow[]; canManage: boolea
   );
 }
 
-function OrgSettings({ icpText, radarMarkets, dailyCallBudget, canManage }: { icpText: string; radarMarkets: string[]; dailyCallBudget: number; canManage: boolean }) {
+function OrgSettings({ icpText, radarMarkets, dailyCallBudget, dailySweepEnabled, canManage }: { icpText: string; radarMarkets: string[]; dailyCallBudget: number; dailySweepEnabled: boolean; canManage: boolean }) {
   const [icp, setIcp] = useState(icpText);
   const [markets, setMarkets] = useState(radarMarkets.join(", "));
   const [budget, setBudget] = useState(String(dailyCallBudget));
@@ -136,7 +137,54 @@ function OrgSettings({ icpText, radarMarkets, dailyCallBudget, canManage }: { ic
       >
         {busy ? "Saving…" : "Save"}
       </button>
+
+      <DailySweep enabled={dailySweepEnabled} canManage={canManage} />
     </Section>
+  );
+}
+
+/** The 05:30 schedule. Both directions are safe, so no confirm step. */
+function DailySweep({ enabled, canManage }: { enabled: boolean; canManage: boolean }) {
+  const [on, setOn] = useState(enabled);
+  const [busy, setBusy] = useState(false);
+
+  async function flip() {
+    setBusy(true);
+    try {
+      const r = await setDailySweepEnabled(!on);
+      if (!r.ok) return toast.error(r.message);
+      setOn(r.enabled);
+      toast.success(r.enabled ? "Daily sweep is on" : "Daily sweep is paused", {
+        description: r.enabled
+          ? "The engine sweeps every morning at 05:30 IST."
+          : "No scheduled model calls. You can still run a sweep by hand.",
+      });
+    } catch {
+      toast.error("Could not change that", { description: "The server did not answer." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-5 border-t border-line pt-3">
+      <p className="text-[11px] uppercase tracking-wide text-faint">Daily sweep</p>
+      <p className={`mt-1 text-[13px] ${on ? "text-body" : "text-amber"}`}>
+        {on
+          ? "On — the engine sweeps every morning at 05:30 IST and posts the brief."
+          : "Paused — no scheduled model calls. A sweep only runs when you start one."}
+      </p>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        disabled={!canManage || busy}
+        onClick={() => void flip()}
+        className="mt-2 rounded border border-line px-2.5 py-1 text-[13px] text-body transition-colors duration-150 hover:bg-panel disabled:opacity-40"
+      >
+        {busy ? "…" : on ? "Pause daily sweep" : "Turn daily sweep on"}
+      </button>
+    </div>
   );
 }
 

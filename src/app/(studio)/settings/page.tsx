@@ -41,6 +41,7 @@ export default async function SettingsPage() {
         icpText={cfg?.icpText ?? ""}
         radarMarkets={cfg?.radarMarkets ?? []}
         dailyCallBudget={cfg?.dailyCallBudget ?? 60}
+        dailySweepEnabled={cfg?.dailySweepEnabled ?? true}
         dnc={dncList}
         canManageSettings={can(session.role, "manageSettings")}
         canManageCompliance={can(session.role, "manageCompliance")}

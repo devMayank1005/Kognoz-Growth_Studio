@@ -105,6 +105,13 @@ export const settings = pgTable("settings", {
    * someone has read what would land.
    */
   zohoDryRun: boolean("zoho_dry_run").notNull().default(true),
+
+  /**
+   * Whether the 05:30 cron sweeps this org. Off means no scheduled model calls
+   * at all — no sweeps, no FX fetch, no brief. A manual run still works: this
+   * gates the schedule, not the sweep.
+   */
+  dailySweepEnabled: boolean("daily_sweep_enabled").notNull().default(true),
 });
 
 /** Region codes Zoho returns in the callback's `location` parameter. */

@@ -134,6 +134,13 @@
       "when": 1789990800934,
       "tag": "0018_row_level_security",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790260196880,
+      "tag": "0019_daily_sweep_toggle",
+      "breakpoints": true
     }
   ]
 }

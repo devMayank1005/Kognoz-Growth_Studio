@@ -55,10 +55,18 @@ export const dailySweepCron = inngest.createFunction(
     const orgs = await step.run("list-orgs", async () => {
       // ORDER BY so the set is stable run to run; `limit 1` with no order was
       // the bug this function exists to remove.
-      const rows = await db.select({ id: organization.id }).from(organization).orderBy(organization.id);
+      const rows = await db
+        .select({ id: organization.id, enabled: settings.dailySweepEnabled })
+        .from(organization)
+        .leftJoin(settings, eq(settings.orgId, organization.id))
+        .orderBy(organization.id);
       if (rows.length === 0) throw new Error("no organization — run pnpm db:seed");
-      return rows;
+      // Paused in Settings → no scheduled model calls for that org. Manual runs
+      // send SWEEP_EVENT directly and never pass through here.
+      return rows.filter((r) => r.enabled === true).map((r) => ({ id: r.id }));
     });
+
+    if (orgs.length === 0) return { orgs: 0, paused: true };
 
     // Inside a step so a retry of this function does not re-send: Inngest
     // memoizes a completed step rather than re-running it.
